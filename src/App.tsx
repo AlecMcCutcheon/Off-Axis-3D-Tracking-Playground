@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefO
 import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { HDRLoader } from "three/examples/jsm/loaders/HDRLoader.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { EffectComposer, Vignette } from "@react-three/postprocessing";
 import { BlendFunction } from "postprocessing";
 import { FaceLandmarker, HandLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
@@ -100,7 +101,7 @@ const DEFAULT_THROW_INERTIA_ENABLED = false;
 const DEFAULT_OBJECT_COLLECTION: ObjectCollectionId = "starter";
 const DEFAULT_SETTINGS_COLLAPSED = true;
 const DEFAULT_ADVANCED_EXPANDED = false;
-const DEFAULT_RICH_LIGHTING_ENABLED = true;
+const DEFAULT_RICH_LIGHTING_ENABLED = false;
 const SETTINGS_STORAGE_KEY = "off-axis-3d-playground.settings.v2";
 const SETTINGS_STORAGE_KEY_LEGACY_V1 = "off-axis-3d-playground.settings.v1";
 
@@ -131,17 +132,8 @@ const getDefaultPersistedSettings = (): PersistedAppSettings => ({
   richLightingEnabled: DEFAULT_RICH_LIGHTING_ENABLED,
 });
 
-/** When the key is missing from storage, prefer off on phones / narrow viewports. */
-const inferDefaultRichLighting = (): boolean => {
-  if (typeof window === "undefined") return DEFAULT_RICH_LIGHTING_ENABLED;
-  const ua =
-    typeof navigator !== "undefined" &&
-    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
-  const narrow =
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(max-width: 768px)").matches;
-  return !(ua || narrow);
-};
+/** Legacy saves without this key default to simple lighting (off). */
+const inferDefaultRichLighting = (): boolean => false;
 
 /** v1 used `gravityEnabled` for the whole room-physics toggle. */
 interface LegacyV1Settings {
@@ -1352,6 +1344,59 @@ const resolveMeshRoomCollision = (
   return { touchingBoundary, onFloor };
 };
 
+interface MeshStdMaterialBackup {
+  metalness: number;
+  roughness: number;
+  envMapIntensity: number;
+  emissiveIntensity: number;
+  clearcoat: number;
+}
+
+/** Softer, less specular look when HDRI is off; restores originals when rich lighting returns. */
+function tuneStandardMaterialsForSimpleLighting(
+  root: THREE.Object3D,
+  richLighting: boolean,
+  backupByUuid: Map<string, MeshStdMaterialBackup>
+) {
+  root.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      if (!(mat instanceof THREE.MeshStandardMaterial) && !(mat instanceof THREE.MeshPhysicalMaterial)) {
+        continue;
+      }
+      let b = backupByUuid.get(mat.uuid);
+      if (!b) {
+        b = {
+          metalness: mat.metalness,
+          roughness: mat.roughness,
+          envMapIntensity: mat.envMapIntensity,
+          emissiveIntensity: mat.emissiveIntensity,
+          clearcoat: mat instanceof THREE.MeshPhysicalMaterial ? mat.clearcoat : 0,
+        };
+        backupByUuid.set(mat.uuid, b);
+      }
+      if (!richLighting) {
+        mat.envMapIntensity = Math.min(b.envMapIntensity * 0.4, 0.3);
+        mat.metalness = Math.min(b.metalness * 0.7, 0.55);
+        mat.roughness = Math.max(b.roughness * 0.94, 0.36);
+        mat.emissiveIntensity = Math.min(b.emissiveIntensity, 0.42);
+        if (mat instanceof THREE.MeshPhysicalMaterial) {
+          mat.clearcoat = Math.min(b.clearcoat, 0.16);
+        }
+      } else {
+        mat.metalness = b.metalness;
+        mat.roughness = b.roughness;
+        mat.envMapIntensity = b.envMapIntensity;
+        mat.emissiveIntensity = b.emissiveIntensity;
+        if (mat instanceof THREE.MeshPhysicalMaterial) {
+          mat.clearcoat = b.clearcoat;
+        }
+      }
+    }
+  });
+}
+
 // ── Draggable object ──────────────────────────────────────────────────────────
 const DraggableObject = ({
   position,
@@ -1391,6 +1436,7 @@ const DraggableObject = ({
   const lastDragPos = useRef(new THREE.Vector3());
   const lastDragTimeMs = useRef(0);
   const grabLeverArm = useRef(new THREE.Vector3());
+  const materialBackupRef = useRef<Map<string, MeshStdMaterialBackup>>(new Map());
   const MAX_GRAVITY_DT = 1 / 30;
   const ANGULAR_DAMPING = 0.992;
   const SLEEP_LINEAR_SPEED = 0.26;
@@ -1416,6 +1462,12 @@ const DraggableObject = ({
     }
     return () => { if (mesh) draggableRegistry.delete(mesh); };
   }, [mass, linearDamping, angularDamping, surfaceFriction]);
+
+  useLayoutEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    tuneStandardMaterialsForSimpleLighting(mesh, richLighting, materialBackupRef.current);
+  }, [richLighting]);
 
   useFrame((_, delta) => {
     const mesh = meshRef.current;
@@ -1655,8 +1707,8 @@ const DraggableObject = ({
     <mesh
       ref={meshRef}
       position={position}
-      castShadow={richLighting}
-      receiveShadow={richLighting}
+      castShadow
+      receiveShadow
       onPointerDown={(e) => {
         e.stopPropagation();
         isDragging.current = true;
@@ -1758,6 +1810,28 @@ const FingerDots = ({
   const BASELINE_RECALIBRATION_LERP = 0.015;
   const RECALIBRATION_DEPTH_GATE_N = 0.012;
   const RECALIBRATION_SCALE_GATE = 0.12;
+
+  const fingerMaterialBackupRef = useRef<Map<string, MeshStdMaterialBackup>>(new Map());
+
+  useLayoutEffect(() => {
+    const apply = () => {
+      if (thumbRef.current) {
+        tuneStandardMaterialsForSimpleLighting(
+          thumbRef.current,
+          richLighting,
+          fingerMaterialBackupRef.current
+        );
+      }
+      if (indexRef.current) {
+        tuneStandardMaterialsForSimpleLighting(
+          indexRef.current,
+          richLighting,
+          fingerMaterialBackupRef.current
+        );
+      }
+    };
+    apply();
+  }, [richLighting]);
 
   useFrame(() => {
     const p = pinchRef.current;
@@ -2024,11 +2098,11 @@ const FingerDots = ({
 
   return (
     <group visible={pinchData.hasHand}>
-      <mesh ref={thumbRef} castShadow={richLighting}>
+      <mesh ref={thumbRef} castShadow>
         <sphereGeometry args={[0.35, 8, 8]} />
         <meshStandardMaterial color="#ff8800" emissive="#ff4400" emissiveIntensity={0.6} />
       </mesh>
-      <mesh ref={indexRef} castShadow={richLighting}>
+      <mesh ref={indexRef} castShadow>
         <sphereGeometry args={[0.35, 8, 8]} />
         <meshStandardMaterial color="#00ccff" emissive="#0088cc" emissiveIntensity={0.6} />
       </mesh>
@@ -2101,7 +2175,7 @@ const Floor = ({ richLighting }: { richLighting: boolean }) => {
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, -SCREEN_HEIGHT_CM / 2, -d / 2]}
-      receiveShadow={richLighting}
+      receiveShadow
     >
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial
@@ -2109,7 +2183,7 @@ const Floor = ({ richLighting }: { richLighting: boolean }) => {
         color="#ffffff"
         roughness={0.92}
         metalness={0.04}
-        envMapIntensity={richLighting ? 0.45 : 0.08}
+        envMapIntensity={richLighting ? 0.45 : 0.24}
       />
     </mesh>
   );
@@ -2120,12 +2194,12 @@ const RoomWalls = ({ richLighting }: { richLighting: boolean }) => {
   const h = SCREEN_HEIGHT_CM;
   const d = BOX_DEPTH_CM;
   const wallTexture = useEdgeDarkenedTexture("#2f333b", 0.56, 0.58);
-  const envI = richLighting ? 0.35 : 0.08;
+  const envI = richLighting ? 0.35 : 0.22;
 
   return (
     <>
       {/* Back wall */}
-      <mesh position={[0, 0, -d]} receiveShadow={richLighting}>
+      <mesh position={[0, 0, -d]} receiveShadow>
         <planeGeometry args={[w, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
@@ -2138,7 +2212,7 @@ const RoomWalls = ({ richLighting }: { richLighting: boolean }) => {
       </mesh>
 
       {/* Left wall */}
-      <mesh position={[-w / 2, 0, -d / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow={richLighting}>
+      <mesh position={[-w / 2, 0, -d / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[d, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
@@ -2151,7 +2225,7 @@ const RoomWalls = ({ richLighting }: { richLighting: boolean }) => {
       </mesh>
 
       {/* Right wall */}
-      <mesh position={[w / 2, 0, -d / 2]} rotation={[0, -Math.PI / 2, 0]} receiveShadow={richLighting}>
+      <mesh position={[w / 2, 0, -d / 2]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
         <planeGeometry args={[d, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
@@ -2176,7 +2250,7 @@ const Roof = ({ richLighting }: { richLighting: boolean }) => {
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, h / 2, -d / 2]}
-      receiveShadow={richLighting}
+      receiveShadow
     >
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial
@@ -2184,7 +2258,7 @@ const Roof = ({ richLighting }: { richLighting: boolean }) => {
         color="#ffffff"
         roughness={0.95}
         metalness={0.02}
-        envMapIntensity={richLighting ? 0.3 : 0.08}
+        envMapIntensity={richLighting ? 0.3 : 0.2}
         side={THREE.DoubleSide}
       />
     </mesh>
@@ -2257,6 +2331,34 @@ const HDRIEnvironment = ({ url }: { url: string }) => {
     scene.environment = envMap;
     scene.environmentIntensity = 0.95;
     return () => { scene.environment = null; };
+  }, [scene, envMap]);
+
+  return null;
+};
+
+/** Lightweight studio-style PMREM (no network). Used for simple reflections when HDRI is off. */
+const SimpleNeutralEnvironment = () => {
+  const { gl, scene } = useThree();
+  const rtRef = useRef<THREE.WebGLRenderTarget | null>(null);
+
+  const envMap = useMemo(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const env = new RoomEnvironment();
+    const rt = pmrem.fromScene(env, 0.04);
+    pmrem.dispose();
+    rtRef.current = rt;
+    return rt.texture;
+  }, [gl]);
+
+  useEffect(() => {
+    scene.environment = envMap;
+    scene.environmentIntensity = 0.44;
+    return () => {
+      scene.environment = null;
+      scene.environmentIntensity = 1;
+      rtRef.current?.dispose();
+      rtRef.current = null;
+    };
   }, [scene, envMap]);
 
   return null;
@@ -2453,40 +2555,75 @@ const DEFAULT_HDRI = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/small
 // ── Shadow-casting spot (HDRI handles all ambient/specular) ───────────────────
 const Lights = ({ richLighting }: { richLighting: boolean }) => {
   const keyRef = useRef<THREE.SpotLight>(null);
+  const ceilingDownRef = useRef<THREE.DirectionalLight>(null);
 
   useEffect(() => {
-    keyRef.current?.target.position.set(0, 0, -BOX_DEPTH_CM / 2);
-    keyRef.current?.target.updateMatrixWorld();
-  }, []);
+    const spot = keyRef.current;
+    if (spot) {
+      if (richLighting) {
+        spot.target.position.set(0, 0, -BOX_DEPTH_CM / 2);
+      } else {
+        // Front ceiling, near the viewport: aim toward the floor deeper in the room.
+        spot.target.position.set(
+          0,
+          -ROOM_HALF_HEIGHT * 0.92,
+          -BOX_DEPTH_CM * 0.52
+        );
+      }
+      spot.target.updateMatrixWorld();
+    }
+    const down = ceilingDownRef.current;
+    if (down) {
+      down.target.position.set(0, -SCREEN_HEIGHT_CM * 0.52, -BOX_DEPTH_CM * 0.5);
+      down.target.updateMatrixWorld();
+    }
+  }, [richLighting]);
 
   if (!richLighting) {
+    const roomMidZ = -BOX_DEPTH_CM * 0.5;
+    const roofY = SCREEN_HEIGHT_CM * 0.5;
+    /** Lights above the roof; no shadow maps on directionals — only the spot casts a simple shadow. */
+    const aboveRoofY = roofY + 6;
+    /** Front of room / “window” plane — spot sits above this so it shines into the room, not from the middle of the box. */
+    const viewportCeilingZ = 1.25;
     return (
       <>
-        <ambientLight intensity={0.58} />
+        <ambientLight intensity={0.5} />
         <hemisphereLight
-          intensity={0.92}
+          intensity={0.78}
           color="#e6eeff"
           groundColor="#2a2d34"
         />
+        <directionalLight
+          ref={ceilingDownRef}
+          position={[0, SCREEN_HEIGHT_CM * 2.6, roomMidZ]}
+          intensity={4.45}
+          color="#fff8f2"
+        />
         <spotLight
           ref={keyRef}
-          position={[0, SCREEN_HEIGHT_CM * 1.5, DEFAULT_HEAD_Z_CM * 0.9]}
-          angle={Math.PI / 4}
-          penumbra={0.35}
-          intensity={14000}
+          position={[0, aboveRoofY + SCREEN_HEIGHT_CM * 0.85, viewportCeilingZ]}
+          angle={Math.PI / 3.2}
+          penumbra={0.42}
+          intensity={10000}
           distance={0}
           decay={2}
           color="#fff5e0"
-          castShadow={false}
+          castShadow
+          shadow-mapSize={[1024, 1024]}
+          shadow-camera-near={25}
+          shadow-camera-far={200}
+          shadow-bias={-0.00018}
+          shadow-normalBias={0.045}
         />
         <directionalLight
           position={[SCREEN_WIDTH_CM * 2, SCREEN_HEIGHT_CM * 0.1, -BOX_DEPTH_CM * 0.5]}
-          intensity={2.2}
+          intensity={1.9}
           color="#c8deff"
         />
         <directionalLight
           position={[-SCREEN_WIDTH_CM * 0.5, -SCREEN_HEIGHT_CM * 0.8, -BOX_DEPTH_CM * 0.2]}
-          intensity={1.35}
+          intensity={1.12}
           color="#ffe8c8"
         />
       </>
@@ -2561,7 +2698,7 @@ const Scene = ({
   objectCollection: ObjectCollectionId;
   objectResetToken: number;
 }) => {
-  const shadowMode = richLightingEnabled ? ("variance" as const) : false;
+  const shadowMode = richLightingEnabled ? ("variance" as const) : ("basic" as const);
   return (
     <Canvas
       shadows={shadowMode}
@@ -2570,7 +2707,7 @@ const Scene = ({
     >
       <CameraRig headPose={headPose} />
       <Lights richLighting={richLightingEnabled} />
-      {richLightingEnabled && <HDRIEnvironment url={hdriUrl} />}
+      {richLightingEnabled ? <HDRIEnvironment url={hdriUrl} /> : <SimpleNeutralEnvironment />}
       <Floor richLighting={richLightingEnabled} />
       <RoomWalls richLighting={richLightingEnabled} />
       <Roof richLighting={richLightingEnabled} />

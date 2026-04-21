@@ -158,6 +158,10 @@ body,
   border: 0;
 }
 
+.tracker-video-wrapper-mobile-hidden {
+  display: none;
+}
+
 .tracker-video {
   position: absolute;
   inset: 0;
