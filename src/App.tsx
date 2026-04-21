@@ -1377,12 +1377,12 @@ function tuneStandardMaterialsForSimpleLighting(
         backupByUuid.set(mat.uuid, b);
       }
       if (!richLighting) {
-        mat.envMapIntensity = Math.min(b.envMapIntensity * 0.4, 0.3);
-        mat.metalness = Math.min(b.metalness * 0.7, 0.55);
-        mat.roughness = Math.max(b.roughness * 0.94, 0.36);
-        mat.emissiveIntensity = Math.min(b.emissiveIntensity, 0.42);
+        mat.envMapIntensity = Math.min(b.envMapIntensity * 0.26, 0.16);
+        mat.metalness = Math.min(b.metalness * 0.56, 0.4);
+        mat.roughness = Math.max(b.roughness * 1.06, 0.45);
+        mat.emissiveIntensity = Math.min(b.emissiveIntensity, 0.26);
         if (mat instanceof THREE.MeshPhysicalMaterial) {
-          mat.clearcoat = Math.min(b.clearcoat, 0.16);
+          mat.clearcoat = Math.min(b.clearcoat, 0.07);
         }
       } else {
         mat.metalness = b.metalness;
@@ -2588,16 +2588,16 @@ const Lights = ({ richLighting }: { richLighting: boolean }) => {
     const viewportCeilingZ = 1.25;
     return (
       <>
-        <ambientLight intensity={0.5} />
+        <ambientLight intensity={0.32} />
         <hemisphereLight
-          intensity={0.78}
+          intensity={0.5}
           color="#e6eeff"
           groundColor="#2a2d34"
         />
         <directionalLight
           ref={ceilingDownRef}
           position={[0, SCREEN_HEIGHT_CM * 2.6, roomMidZ]}
-          intensity={4.45}
+          intensity={2.85}
           color="#fff8f2"
         />
         <spotLight
@@ -2605,7 +2605,7 @@ const Lights = ({ richLighting }: { richLighting: boolean }) => {
           position={[0, aboveRoofY + SCREEN_HEIGHT_CM * 0.85, viewportCeilingZ]}
           angle={Math.PI / 3.2}
           penumbra={0.42}
-          intensity={10000}
+          intensity={6400}
           distance={0}
           decay={2}
           color="#fff5e0"
@@ -2618,12 +2618,12 @@ const Lights = ({ richLighting }: { richLighting: boolean }) => {
         />
         <directionalLight
           position={[SCREEN_WIDTH_CM * 2, SCREEN_HEIGHT_CM * 0.1, -BOX_DEPTH_CM * 0.5]}
-          intensity={1.9}
+          intensity={1.2}
           color="#c8deff"
         />
         <directionalLight
           position={[-SCREEN_WIDTH_CM * 0.5, -SCREEN_HEIGHT_CM * 0.8, -BOX_DEPTH_CM * 0.2]}
-          intensity={1.12}
+          intensity={0.68}
           color="#ffe8c8"
         />
       </>
