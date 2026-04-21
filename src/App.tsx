@@ -66,6 +66,8 @@ interface PersistedAppSettings {
   objectCollection: ObjectCollectionId;
   settingsCollapsed: boolean;
   advancedSettingsExpanded: boolean;
+  /** HDRI env map, shadow maps, vignette — single “rich lighting” switch */
+  richLightingEnabled: boolean;
 }
 
 const VIDEO_WIDTH = 640;
@@ -98,6 +100,7 @@ const DEFAULT_THROW_INERTIA_ENABLED = false;
 const DEFAULT_OBJECT_COLLECTION: ObjectCollectionId = "starter";
 const DEFAULT_SETTINGS_COLLAPSED = true;
 const DEFAULT_ADVANCED_EXPANDED = false;
+const DEFAULT_RICH_LIGHTING_ENABLED = true;
 const SETTINGS_STORAGE_KEY = "off-axis-3d-playground.settings.v2";
 const SETTINGS_STORAGE_KEY_LEGACY_V1 = "off-axis-3d-playground.settings.v1";
 
@@ -125,7 +128,20 @@ const getDefaultPersistedSettings = (): PersistedAppSettings => ({
   objectCollection: DEFAULT_OBJECT_COLLECTION,
   settingsCollapsed: DEFAULT_SETTINGS_COLLAPSED,
   advancedSettingsExpanded: DEFAULT_ADVANCED_EXPANDED,
+  richLightingEnabled: DEFAULT_RICH_LIGHTING_ENABLED,
 });
+
+/** When the key is missing from storage, prefer off on phones / narrow viewports. */
+const inferDefaultRichLighting = (): boolean => {
+  if (typeof window === "undefined") return DEFAULT_RICH_LIGHTING_ENABLED;
+  const ua =
+    typeof navigator !== "undefined" &&
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  const narrow =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(max-width: 768px)").matches;
+  return !(ua || narrow);
+};
 
 /** v1 used `gravityEnabled` for the whole room-physics toggle. */
 interface LegacyV1Settings {
@@ -208,6 +224,11 @@ const readPersistedSettings = (): PersistedAppSettings => {
         ? parsed.advancedSettingsExpanded
         : defaults.advancedSettingsExpanded;
 
+    const richLightingEnabled =
+      typeof parsed.richLightingEnabled === "boolean"
+        ? parsed.richLightingEnabled
+        : inferDefaultRichLighting();
+
     return {
       sensitivity:
         typeof parsed.sensitivity === "number" && Number.isFinite(parsed.sensitivity)
@@ -241,6 +262,7 @@ const readPersistedSettings = (): PersistedAppSettings => {
           ? parsed.settingsCollapsed
           : defaults.settingsCollapsed,
       advancedSettingsExpanded,
+      richLightingEnabled,
     };
   } catch {
     return defaults;
@@ -1338,6 +1360,7 @@ const DraggableObject = ({
   gravityStrength,
   restitution,
   throwInertiaEnabled,
+  richLighting,
   mass,
   linearDamping,
   angularDamping,
@@ -1350,6 +1373,7 @@ const DraggableObject = ({
   gravityStrength: number;
   restitution: number;
   throwInertiaEnabled: boolean;
+  richLighting: boolean;
   mass: number;
   linearDamping: number;
   angularDamping: number;
@@ -1631,8 +1655,8 @@ const DraggableObject = ({
     <mesh
       ref={meshRef}
       position={position}
-      castShadow
-      receiveShadow
+      castShadow={richLighting}
+      receiveShadow={richLighting}
       onPointerDown={(e) => {
         e.stopPropagation();
         isDragging.current = true;
@@ -1668,11 +1692,13 @@ const FingerDots = ({
   sensitivity,
   roomPhysicsEnabled,
   throwInertiaEnabled,
+  richLighting,
 }: {
   pinchData: PinchData;
   sensitivity: number;
   roomPhysicsEnabled: boolean;
   throwInertiaEnabled: boolean;
+  richLighting: boolean;
 }) => {
   const { camera, raycaster } = useThree();
   const pinchRef = useRef(pinchData);
@@ -1998,11 +2024,11 @@ const FingerDots = ({
 
   return (
     <group visible={pinchData.hasHand}>
-      <mesh ref={thumbRef} castShadow>
+      <mesh ref={thumbRef} castShadow={richLighting}>
         <sphereGeometry args={[0.35, 8, 8]} />
         <meshStandardMaterial color="#ff8800" emissive="#ff4400" emissiveIntensity={0.6} />
       </mesh>
-      <mesh ref={indexRef} castShadow>
+      <mesh ref={indexRef} castShadow={richLighting}>
         <sphereGeometry args={[0.35, 8, 8]} />
         <meshStandardMaterial color="#00ccff" emissive="#0088cc" emissiveIntensity={0.6} />
       </mesh>
@@ -2066,7 +2092,7 @@ const useEdgeDarkenedTexture = (baseColor: string, edgeAlpha = 0.3, cornerAlpha 
     return texture;
   }, [baseColor, edgeAlpha, cornerAlpha]);
 
-const Floor = () => {
+const Floor = ({ richLighting }: { richLighting: boolean }) => {
   const w = SCREEN_WIDTH_CM;
   const d = BOX_DEPTH_CM;
   const floorTexture = useEdgeDarkenedTexture("#35383f", 0.45, 0.45);
@@ -2075,7 +2101,7 @@ const Floor = () => {
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, -SCREEN_HEIGHT_CM / 2, -d / 2]}
-      receiveShadow
+      receiveShadow={richLighting}
     >
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial
@@ -2083,55 +2109,56 @@ const Floor = () => {
         color="#ffffff"
         roughness={0.92}
         metalness={0.04}
-        envMapIntensity={0.45}
+        envMapIntensity={richLighting ? 0.45 : 0.08}
       />
     </mesh>
   );
 };
 
-const RoomWalls = () => {
+const RoomWalls = ({ richLighting }: { richLighting: boolean }) => {
   const w = SCREEN_WIDTH_CM;
   const h = SCREEN_HEIGHT_CM;
   const d = BOX_DEPTH_CM;
   const wallTexture = useEdgeDarkenedTexture("#2f333b", 0.56, 0.58);
+  const envI = richLighting ? 0.35 : 0.08;
 
   return (
     <>
       {/* Back wall */}
-      <mesh position={[0, 0, -d]} receiveShadow>
+      <mesh position={[0, 0, -d]} receiveShadow={richLighting}>
         <planeGeometry args={[w, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
           color="#ffffff"
           roughness={0.95}
           metalness={0.02}
-          envMapIntensity={0.35}
+          envMapIntensity={envI}
           side={THREE.DoubleSide}
         />
       </mesh>
 
       {/* Left wall */}
-      <mesh position={[-w / 2, 0, -d / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow>
+      <mesh position={[-w / 2, 0, -d / 2]} rotation={[0, Math.PI / 2, 0]} receiveShadow={richLighting}>
         <planeGeometry args={[d, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
           color="#ffffff"
           roughness={0.95}
           metalness={0.02}
-          envMapIntensity={0.35}
+          envMapIntensity={envI}
           side={THREE.DoubleSide}
         />
       </mesh>
 
       {/* Right wall */}
-      <mesh position={[w / 2, 0, -d / 2]} rotation={[0, -Math.PI / 2, 0]} receiveShadow>
+      <mesh position={[w / 2, 0, -d / 2]} rotation={[0, -Math.PI / 2, 0]} receiveShadow={richLighting}>
         <planeGeometry args={[d, h]} />
         <meshStandardMaterial
           map={wallTexture ?? undefined}
           color="#ffffff"
           roughness={0.95}
           metalness={0.02}
-          envMapIntensity={0.35}
+          envMapIntensity={envI}
           side={THREE.DoubleSide}
         />
       </mesh>
@@ -2139,7 +2166,7 @@ const RoomWalls = () => {
   );
 };
 
-const Roof = () => {
+const Roof = ({ richLighting }: { richLighting: boolean }) => {
   const w = SCREEN_WIDTH_CM;
   const d = BOX_DEPTH_CM;
   const h = SCREEN_HEIGHT_CM;
@@ -2149,7 +2176,7 @@ const Roof = () => {
     <mesh
       rotation={[-Math.PI / 2, 0, 0]}
       position={[0, h / 2, -d / 2]}
-      receiveShadow
+      receiveShadow={richLighting}
     >
       <planeGeometry args={[w, d]} />
       <meshStandardMaterial
@@ -2157,7 +2184,7 @@ const Roof = () => {
         color="#ffffff"
         roughness={0.95}
         metalness={0.02}
-        envMapIntensity={0.3}
+        envMapIntensity={richLighting ? 0.3 : 0.08}
         side={THREE.DoubleSide}
       />
     </mesh>
@@ -2242,6 +2269,7 @@ const SceneObjects = ({
   gravityStrength,
   restitution,
   throwInertiaEnabled,
+  richLighting,
   collection,
 }: {
   roomPhysicsEnabled: boolean;
@@ -2249,32 +2277,33 @@ const SceneObjects = ({
   gravityStrength: number;
   restitution: number;
   throwInertiaEnabled: boolean;
+  richLighting: boolean;
   collection: ObjectCollectionId;
 }) => {
   if (collection === "dense") {
     return (
       <>
-        <DraggableObject position={[5.6, -4.2, -12]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={0.8} linearDamping={0.2} angularDamping={0.66} surfaceFriction={0.35}>
+        <DraggableObject position={[5.6, -4.2, -12]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={0.8} linearDamping={0.2} angularDamping={0.66} surfaceFriction={0.35}>
           <icosahedronGeometry args={[2.1, 0]} />
           <meshStandardMaterial color="#f26ae6" roughness={0.2} metalness={0.6} />
         </DraggableObject>
-        <DraggableObject position={[-5.8, -4.3, -16]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.7} linearDamping={0.38} angularDamping={1.12} surfaceFriction={0.66}>
+        <DraggableObject position={[-5.8, -4.3, -16]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={2.7} linearDamping={0.38} angularDamping={1.12} surfaceFriction={0.66}>
           <boxGeometry args={[4.4, 4.4, 4.4]} />
           <meshStandardMaterial color="#6f86ff" roughness={0.42} metalness={0.68} />
         </DraggableObject>
-        <DraggableObject position={[0.8, -3.5, -25]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.2} linearDamping={0.24} angularDamping={0.76} surfaceFriction={0.44}>
+        <DraggableObject position={[0.8, -3.5, -25]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={1.2} linearDamping={0.24} angularDamping={0.76} surfaceFriction={0.44}>
           <dodecahedronGeometry args={[2.6, 0]} />
           <meshStandardMaterial color="#44d2ff" roughness={0.32} metalness={0.4} />
         </DraggableObject>
-        <DraggableObject position={[7.3, -4.4, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.5} linearDamping={0.26} angularDamping={0.84} surfaceFriction={0.48}>
+        <DraggableObject position={[7.3, -4.4, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={1.5} linearDamping={0.26} angularDamping={0.84} surfaceFriction={0.48}>
           <sphereGeometry args={[2.8, 48, 48]} />
           <meshStandardMaterial color="#ff9854" roughness={0.58} metalness={0.12} />
         </DraggableObject>
-        <DraggableObject position={[-7.2, -3.9, -44]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2} linearDamping={0.31} angularDamping={0.95} surfaceFriction={0.6}>
+        <DraggableObject position={[-7.2, -3.9, -44]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={2} linearDamping={0.31} angularDamping={0.95} surfaceFriction={0.6}>
           <torusGeometry args={[2.4, 0.8, 28, 36]} />
           <meshStandardMaterial color="#7ce9aa" roughness={0.24} metalness={0.55} />
         </DraggableObject>
-        <DraggableObject position={[0.2, 1.2, -59]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.2} linearDamping={0.32} angularDamping={1.03} surfaceFriction={0.58}>
+        <DraggableObject position={[0.2, 1.2, -59]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={2.2} linearDamping={0.32} angularDamping={1.03} surfaceFriction={0.58}>
           <torusKnotGeometry args={[2.2, 0.64, 120, 22]} />
           <meshStandardMaterial color="#66f4d6" roughness={0.08} metalness={0.84} />
         </DraggableObject>
@@ -2285,27 +2314,27 @@ const SceneObjects = ({
   if (collection === "chaos") {
     return (
       <>
-        <DraggableObject position={[0, -4.2, -10]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={4.4} linearDamping={0.46} angularDamping={1.22} surfaceFriction={0.82}>
+        <DraggableObject position={[0, -4.2, -10]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={4.4} linearDamping={0.46} angularDamping={1.22} surfaceFriction={0.82}>
           <cylinderGeometry args={[3.1, 3.1, 2.8, 36]} />
           <meshStandardMaterial color="#8d7aff" roughness={0.52} metalness={0.42} />
         </DraggableObject>
-        <DraggableObject position={[0.2, 2.4, -21]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={0.6} linearDamping={0.14} angularDamping={0.58} surfaceFriction={0.22}>
+        <DraggableObject position={[0.2, 2.4, -21]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={0.6} linearDamping={0.14} angularDamping={0.58} surfaceFriction={0.22}>
           <tetrahedronGeometry args={[2.9, 0]} />
           <meshStandardMaterial color="#ff6d9e" roughness={0.26} metalness={0.35} />
         </DraggableObject>
-        <DraggableObject position={[-6.8, -2.1, -28]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1} linearDamping={0.21} angularDamping={0.72} surfaceFriction={0.36}>
+        <DraggableObject position={[-6.8, -2.1, -28]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={1} linearDamping={0.21} angularDamping={0.72} surfaceFriction={0.36}>
           <coneGeometry args={[2.5, 5.4, 22]} />
           <meshStandardMaterial color="#7bd3ff" roughness={0.3} metalness={0.46} />
         </DraggableObject>
-        <DraggableObject position={[6.8, -2.3, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.8} linearDamping={0.35} angularDamping={1.08} surfaceFriction={0.72}>
+        <DraggableObject position={[6.8, -2.3, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={2.8} linearDamping={0.35} angularDamping={1.08} surfaceFriction={0.72}>
           <boxGeometry args={[5.2, 2.2, 5.2]} />
           <meshStandardMaterial color="#90a8ff" roughness={0.48} metalness={0.62} />
         </DraggableObject>
-        <DraggableObject position={[-2.2, 2, -47]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.6} linearDamping={0.28} angularDamping={0.88} surfaceFriction={0.54}>
+        <DraggableObject position={[-2.2, 2, -47]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={1.6} linearDamping={0.28} angularDamping={0.88} surfaceFriction={0.54}>
           <torusKnotGeometry args={[1.8, 0.58, 128, 24]} />
           <meshStandardMaterial color="#53f0cb" roughness={0.14} metalness={0.82} />
         </DraggableObject>
-        <DraggableObject position={[3.8, -3.8, -57]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.3} linearDamping={0.2} angularDamping={0.74} surfaceFriction={0.39}>
+        <DraggableObject position={[3.8, -3.8, -57]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} richLighting={richLighting} mass={1.3} linearDamping={0.2} angularDamping={0.74} surfaceFriction={0.39}>
           <sphereGeometry args={[3.1, 56, 56]} />
           <meshStandardMaterial color="#ffb35f" roughness={0.63} metalness={0.1} />
         </DraggableObject>
@@ -2323,6 +2352,7 @@ const SceneObjects = ({
         gravityStrength={gravityStrength}
         restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLighting={richLighting}
         mass={0.9}
         linearDamping={0.18}
         angularDamping={0.68}
@@ -2340,6 +2370,7 @@ const SceneObjects = ({
         gravityStrength={gravityStrength}
         restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLighting={richLighting}
         mass={2.4}
         linearDamping={0.34}
         angularDamping={1.08}
@@ -2357,6 +2388,7 @@ const SceneObjects = ({
         gravityStrength={gravityStrength}
         restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLighting={richLighting}
         mass={1.4}
         linearDamping={0.24}
         angularDamping={0.78}
@@ -2374,6 +2406,7 @@ const SceneObjects = ({
         gravityStrength={gravityStrength}
         restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLighting={richLighting}
         mass={2.1}
         linearDamping={0.3}
         angularDamping={0.96}
@@ -2389,9 +2422,9 @@ const SceneObjects = ({
 // ── UI shadow plane ───────────────────────────────────────────────────────────
 // Invisible mesh that matches the overlay panel's screen rect so the scene
 // light projects its silhouette as a shadow onto the room walls and objects.
-const UIShadowPlane = ({ rect }: { rect: DOMRect | null }) => {
+const UIShadowPlane = ({ rect, richLighting }: { rect: DOMRect | null; richLighting: boolean }) => {
   const { size } = useThree();
-  if (!rect) return null;
+  if (!rect || !richLighting) return null;
 
   const hw = SCREEN_WIDTH_CM / 2;
   const hh = SCREEN_HEIGHT_CM / 2;
@@ -2418,13 +2451,47 @@ const UIShadowPlane = ({ rect }: { rect: DOMRect | null }) => {
 const DEFAULT_HDRI = "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/small_empty_room_3_1k.hdr";
 
 // ── Shadow-casting spot (HDRI handles all ambient/specular) ───────────────────
-const Lights = () => {
+const Lights = ({ richLighting }: { richLighting: boolean }) => {
   const keyRef = useRef<THREE.SpotLight>(null);
 
   useEffect(() => {
     keyRef.current?.target.position.set(0, 0, -BOX_DEPTH_CM / 2);
     keyRef.current?.target.updateMatrixWorld();
   }, []);
+
+  if (!richLighting) {
+    return (
+      <>
+        <ambientLight intensity={0.58} />
+        <hemisphereLight
+          intensity={0.92}
+          color="#e6eeff"
+          groundColor="#2a2d34"
+        />
+        <spotLight
+          ref={keyRef}
+          position={[0, SCREEN_HEIGHT_CM * 1.5, DEFAULT_HEAD_Z_CM * 0.9]}
+          angle={Math.PI / 4}
+          penumbra={0.35}
+          intensity={14000}
+          distance={0}
+          decay={2}
+          color="#fff5e0"
+          castShadow={false}
+        />
+        <directionalLight
+          position={[SCREEN_WIDTH_CM * 2, SCREEN_HEIGHT_CM * 0.1, -BOX_DEPTH_CM * 0.5]}
+          intensity={2.2}
+          color="#c8deff"
+        />
+        <directionalLight
+          position={[-SCREEN_WIDTH_CM * 0.5, -SCREEN_HEIGHT_CM * 0.8, -BOX_DEPTH_CM * 0.2]}
+          intensity={1.35}
+          color="#ffe8c8"
+        />
+      </>
+    );
+  }
 
   return (
     <>
@@ -2475,6 +2542,7 @@ const Scene = ({
   gravityStrength,
   restitution,
   throwInertiaEnabled,
+  richLightingEnabled,
   objectCollection,
   objectResetToken,
 }: {
@@ -2489,46 +2557,58 @@ const Scene = ({
   gravityStrength: number;
   restitution: number;
   throwInertiaEnabled: boolean;
+  richLightingEnabled: boolean;
   objectCollection: ObjectCollectionId;
   objectResetToken: number;
-}) => (
-  <Canvas shadows="variance" camera={{ position: [0, 0, DEFAULT_HEAD_Z_CM], near: NEAR, far: FAR }} dpr={[1, 1.6]}>
-    <CameraRig headPose={headPose} />
-    <Lights />
-    <HDRIEnvironment url={hdriUrl} />
-    <Floor />
-    <RoomWalls />
-    <Roof />
-    <RoomBoxOutline />
-    <SceneObjects
-      key={`${objectCollection}-${objectResetToken}`}
-      roomPhysicsEnabled={roomPhysicsEnabled}
-      gravityForceEnabled={gravityForceEnabled}
-      gravityStrength={gravityStrength}
-      restitution={restitution}
-      throwInertiaEnabled={throwInertiaEnabled}
-      collection={objectCollection}
-    />
-    <UIShadowPlane rect={overlayRect} />
-    {fingerGrab && (
-      <FingerDots
-        pinchData={pinchData}
-        sensitivity={fingerSensitivity}
+}) => {
+  const shadowMode = richLightingEnabled ? ("variance" as const) : false;
+  return (
+    <Canvas
+      shadows={shadowMode}
+      camera={{ position: [0, 0, DEFAULT_HEAD_Z_CM], near: NEAR, far: FAR }}
+      dpr={[1, 1.6]}
+    >
+      <CameraRig headPose={headPose} />
+      <Lights richLighting={richLightingEnabled} />
+      {richLightingEnabled && <HDRIEnvironment url={hdriUrl} />}
+      <Floor richLighting={richLightingEnabled} />
+      <RoomWalls richLighting={richLightingEnabled} />
+      <Roof richLighting={richLightingEnabled} />
+      <RoomBoxOutline />
+      <SceneObjects
+        key={`${objectCollection}-${objectResetToken}`}
         roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
+        gravityStrength={gravityStrength}
+        restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLighting={richLightingEnabled}
+        collection={objectCollection}
       />
-    )}
-    <OrbitControls enablePan={false} enableZoom={false} enableRotate={false} />
-    <EffectComposer multisampling={4}>
-      <Vignette
-        offset={0.3}
-        darkness={0.7}
-        eskil={false}
-        blendFunction={BlendFunction.NORMAL}
-      />
-    </EffectComposer>
-  </Canvas>
-);
+      <UIShadowPlane rect={overlayRect} richLighting={richLightingEnabled} />
+      {fingerGrab && (
+        <FingerDots
+          pinchData={pinchData}
+          sensitivity={fingerSensitivity}
+          roomPhysicsEnabled={roomPhysicsEnabled}
+          throwInertiaEnabled={throwInertiaEnabled}
+          richLighting={richLightingEnabled}
+        />
+      )}
+      <OrbitControls enablePan={false} enableZoom={false} enableRotate={false} />
+      {richLightingEnabled && (
+        <EffectComposer multisampling={4}>
+          <Vignette
+            offset={0.3}
+            darkness={0.7}
+            eskil={false}
+            blendFunction={BlendFunction.NORMAL}
+          />
+        </EffectComposer>
+      )}
+    </Canvas>
+  );
+};
 
 // ── Slider helper ─────────────────────────────────────────────────────────────
 const Slider = ({
@@ -2578,6 +2658,7 @@ const App = () => {
   const [advancedSettingsExpanded, setAdvancedSettingsExpanded] = useState(
     persistedSettings.advancedSettingsExpanded
   );
+  const [richLightingEnabled, setRichLightingEnabled] = useState(persistedSettings.richLightingEnabled);
   const [overlayRect, setOverlayRect] = useState<DOMRect | null>(null);
   const overlayRef = useRef<HTMLElement>(null);
 
@@ -2607,6 +2688,7 @@ const App = () => {
     setRoomPhysicsEnabled(false);
     setGravityForceEnabled(false);
     setThrowInertiaEnabled(false);
+    setRichLightingEnabled(false);
   }, [isMobileDevice]);
 
   const {
@@ -2649,6 +2731,7 @@ const App = () => {
       objectCollection,
       settingsCollapsed,
       advancedSettingsExpanded,
+      richLightingEnabled,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   }, [
@@ -2665,6 +2748,7 @@ const App = () => {
     objectCollection,
     settingsCollapsed,
     advancedSettingsExpanded,
+    richLightingEnabled,
   ]);
 
   const resetSettings = () => {
@@ -2684,6 +2768,7 @@ const App = () => {
     setObjectCollection(defaults.objectCollection);
     setSettingsCollapsed(defaults.settingsCollapsed);
     setAdvancedSettingsExpanded(defaults.advancedSettingsExpanded);
+    setRichLightingEnabled(defaults.richLightingEnabled);
     setAutoRecalibrateToken((v) => v + 1);
   };
 
@@ -2701,6 +2786,7 @@ const App = () => {
         gravityStrength={gravityStrength}
         restitution={restitution}
         throwInertiaEnabled={throwInertiaEnabled}
+        richLightingEnabled={richLightingEnabled}
         objectCollection={objectCollection}
         objectResetToken={objectResetToken}
       />
@@ -2816,6 +2902,28 @@ const App = () => {
                     Heavy options are disabled on small or touch devices.
                   </p>
                 )}
+
+                <label className="slider-row toggle-row">
+                  <span
+                    className="slider-label"
+                    title={
+                      !allowHeavyFeatures
+                        ? "Not available on this device"
+                        : "HDRI image-based lighting, shadow maps, UI silhouette shadow, vignette"
+                    }
+                  >
+                    Rich lighting <span className="settings-cpu-tag">CPU</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!allowHeavyFeatures}
+                    className={`toggle-btn ${richLightingEnabled ? "toggle-btn-on" : ""}`}
+                    title={!allowHeavyFeatures ? "Not available on mobile / narrow viewports" : undefined}
+                    onClick={() => allowHeavyFeatures && setRichLightingEnabled((v) => !v)}
+                  >
+                    {richLightingEnabled ? "ON — HDRI + shadows" : "OFF — simple lights"}
+                  </button>
+                </label>
 
                 <label className="slider-row toggle-row">
                   <span className="slider-label" title={!allowHeavyFeatures ? "Not available on this device" : undefined}>
