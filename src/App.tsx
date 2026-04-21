@@ -58,11 +58,14 @@ interface PersistedAppSettings {
   cameraOffsetMode: CameraOffsetMode;
   cameraOffsetN: number;
   fingerGrab: boolean;
-  gravityEnabled: boolean;
+  roomPhysicsEnabled: boolean;
+  gravityForceEnabled: boolean;
   gravityStrength: number;
   restitution: number;
+  throwInertiaEnabled: boolean;
   objectCollection: ObjectCollectionId;
   settingsCollapsed: boolean;
+  advancedSettingsExpanded: boolean;
 }
 
 const VIDEO_WIDTH = 640;
@@ -87,12 +90,16 @@ const defaultParams: SceneParams = {
   cameraOffsetN: 0,
 };
 const DEFAULT_FINGER_GRAB = false;
-const DEFAULT_GRAVITY_ENABLED = false;
+const DEFAULT_ROOM_PHYSICS_ENABLED = false;
+const DEFAULT_GRAVITY_FORCE_ENABLED = false;
 const DEFAULT_GRAVITY_STRENGTH = 98;
 const DEFAULT_RESTITUTION = 0.62;
+const DEFAULT_THROW_INERTIA_ENABLED = false;
 const DEFAULT_OBJECT_COLLECTION: ObjectCollectionId = "starter";
 const DEFAULT_SETTINGS_COLLAPSED = true;
-const SETTINGS_STORAGE_KEY = "off-axis-3d-playground.settings.v1";
+const DEFAULT_ADVANCED_EXPANDED = false;
+const SETTINGS_STORAGE_KEY = "off-axis-3d-playground.settings.v2";
+const SETTINGS_STORAGE_KEY_LEGACY_V1 = "off-axis-3d-playground.settings.v1";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const CAMERA_MODE_BASE_OFFSET: Record<CameraOffsetMode, number> = {
@@ -110,20 +117,45 @@ const getDefaultPersistedSettings = (): PersistedAppSettings => ({
   cameraOffsetMode: defaultParams.cameraOffsetMode,
   cameraOffsetN: defaultParams.cameraOffsetN,
   fingerGrab: DEFAULT_FINGER_GRAB,
-  gravityEnabled: DEFAULT_GRAVITY_ENABLED,
+  roomPhysicsEnabled: DEFAULT_ROOM_PHYSICS_ENABLED,
+  gravityForceEnabled: DEFAULT_GRAVITY_FORCE_ENABLED,
   gravityStrength: DEFAULT_GRAVITY_STRENGTH,
   restitution: DEFAULT_RESTITUTION,
+  throwInertiaEnabled: DEFAULT_THROW_INERTIA_ENABLED,
   objectCollection: DEFAULT_OBJECT_COLLECTION,
   settingsCollapsed: DEFAULT_SETTINGS_COLLAPSED,
+  advancedSettingsExpanded: DEFAULT_ADVANCED_EXPANDED,
 });
+
+/** v1 used `gravityEnabled` for the whole room-physics toggle. */
+interface LegacyV1Settings {
+  sensitivity?: number;
+  depthCalibration?: number;
+  cameraOffsetMode?: CameraOffsetMode;
+  cameraOffsetN?: number;
+  fingerGrab?: boolean;
+  gravityEnabled?: boolean;
+  gravityStrength?: number;
+  restitution?: number;
+  objectCollection?: ObjectCollectionId;
+  settingsCollapsed?: boolean;
+}
 
 const readPersistedSettings = (): PersistedAppSettings => {
   const defaults = getDefaultPersistedSettings();
   if (typeof window === "undefined") return defaults;
   try {
-    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<PersistedAppSettings>;
+    let raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    let legacyV1: LegacyV1Settings | null = null;
+    if (!raw) {
+      raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY_LEGACY_V1);
+      if (raw) {
+        legacyV1 = JSON.parse(raw) as LegacyV1Settings;
+      } else {
+        return defaults;
+      }
+    }
+    const parsed = legacyV1 ?? (JSON.parse(raw!) as Partial<PersistedAppSettings>);
     const cameraOffsetMode =
       parsed.cameraOffsetMode === "auto" ||
       parsed.cameraOffsetMode === "center" ||
@@ -137,6 +169,42 @@ const readPersistedSettings = (): PersistedAppSettings => {
       parsed.objectCollection === "chaos"
         ? parsed.objectCollection
         : defaults.objectCollection;
+
+    const legacyGravity =
+      legacyV1 && typeof legacyV1.gravityEnabled === "boolean"
+        ? legacyV1.gravityEnabled
+        : undefined;
+    const legacyStrength =
+      legacyV1 && typeof legacyV1.gravityStrength === "number" && Number.isFinite(legacyV1.gravityStrength)
+        ? legacyV1.gravityStrength
+        : undefined;
+
+    const roomPhysicsEnabled =
+      typeof parsed.roomPhysicsEnabled === "boolean"
+        ? parsed.roomPhysicsEnabled
+        : legacyGravity !== undefined
+          ? legacyGravity
+          : defaults.roomPhysicsEnabled;
+
+    const gravityForceEnabled =
+      typeof parsed.gravityForceEnabled === "boolean"
+        ? parsed.gravityForceEnabled
+        : legacyGravity !== undefined
+          ? legacyGravity && (legacyStrength ?? 0) > 0
+          : defaults.gravityForceEnabled;
+
+    const throwInertiaEnabled =
+      typeof parsed.throwInertiaEnabled === "boolean"
+        ? parsed.throwInertiaEnabled
+        : legacyV1
+          ? true
+          : defaults.throwInertiaEnabled;
+
+    const advancedSettingsExpanded =
+      typeof parsed.advancedSettingsExpanded === "boolean"
+        ? parsed.advancedSettingsExpanded
+        : defaults.advancedSettingsExpanded;
+
     return {
       sensitivity:
         typeof parsed.sensitivity === "number" && Number.isFinite(parsed.sensitivity)
@@ -153,10 +221,8 @@ const readPersistedSettings = (): PersistedAppSettings => {
           : defaults.cameraOffsetN,
       fingerGrab:
         typeof parsed.fingerGrab === "boolean" ? parsed.fingerGrab : defaults.fingerGrab,
-      gravityEnabled:
-        typeof parsed.gravityEnabled === "boolean"
-          ? parsed.gravityEnabled
-          : defaults.gravityEnabled,
+      roomPhysicsEnabled,
+      gravityForceEnabled,
       gravityStrength:
         typeof parsed.gravityStrength === "number" && Number.isFinite(parsed.gravityStrength)
           ? clamp(parsed.gravityStrength, 0, 220)
@@ -165,11 +231,13 @@ const readPersistedSettings = (): PersistedAppSettings => {
         typeof parsed.restitution === "number" && Number.isFinite(parsed.restitution)
           ? clamp(parsed.restitution, 0, 0.95)
           : defaults.restitution,
+      throwInertiaEnabled,
       objectCollection,
       settingsCollapsed:
         typeof parsed.settingsCollapsed === "boolean"
           ? parsed.settingsCollapsed
           : defaults.settingsCollapsed,
+      advancedSettingsExpanded,
     };
   } catch {
     return defaults;
@@ -1229,9 +1297,11 @@ const resolveMeshRoomCollision = (
 // ── Draggable object ──────────────────────────────────────────────────────────
 const DraggableObject = ({
   position,
-  gravityEnabled,
+  roomPhysicsEnabled,
+  gravityForceEnabled,
   gravityStrength,
   restitution,
+  throwInertiaEnabled,
   mass,
   linearDamping,
   angularDamping,
@@ -1239,9 +1309,11 @@ const DraggableObject = ({
   children,
 }: {
   position: [number, number, number];
-  gravityEnabled: boolean;
+  roomPhysicsEnabled: boolean;
+  gravityForceEnabled: boolean;
   gravityStrength: number;
   restitution: number;
+  throwInertiaEnabled: boolean;
   mass: number;
   linearDamping: number;
   angularDamping: number;
@@ -1297,6 +1369,11 @@ const DraggableObject = ({
     if (isDragging.current || fingerGrabbedRegistry.has(mesh)) {
       return;
     }
+    if (!roomPhysicsEnabled) {
+      velocity.set(0, 0, 0);
+      angularVelocity.set(0, 0, 0);
+      return;
+    }
     if (sleep.asleep) {
       const linearSpeed = velocity.length();
       const angularSpeed = angularVelocity.length();
@@ -1314,7 +1391,7 @@ const DraggableObject = ({
     }
 
     const dt = Math.min(delta, MAX_GRAVITY_DT);
-    if (gravityEnabled && gravityStrength > 0) {
+    if (gravityForceEnabled && gravityStrength > 0) {
       velocity.y -= gravityStrength * dt;
     }
     const linDampFactor = Math.exp(-physics.linearDamping * dt);
@@ -1332,7 +1409,7 @@ const DraggableObject = ({
       physics.mass,
       angularVelocity
     );
-    if (gravityEnabled && gravityStrength > 0 && collision.onFloor) {
+    if (gravityForceEnabled && gravityStrength > 0 && collision.onFloor) {
       const worldCom = getMeshWorldCenterOfMass(mesh);
       const support = getFloorSupportPoint(mesh, -ROOM_HALF_HEIGHT);
       const lever = new THREE.Vector3(worldCom.x - support.x, 0, worldCom.z - support.z);
@@ -1420,6 +1497,12 @@ const DraggableObject = ({
         meshRef.current.position.copy(intersect.current).sub(offset.current);
         wakeMesh(meshRef.current);
         clampMeshToRoom(meshRef.current);
+        const applyInertia = roomPhysicsEnabled && throwInertiaEnabled;
+        if (!applyInertia) {
+          lastDragPos.current.copy(meshRef.current.position);
+          lastDragTimeMs.current = performance.now();
+          return;
+        }
         const nowMs = performance.now();
         const dt = Math.max((nowMs - lastDragTimeMs.current) / 1000, 1 / 240);
         const velocity = getMeshVelocity(meshRef.current);
@@ -1444,23 +1527,31 @@ const DraggableObject = ({
 
     const onUp = () => {
       if (isDragging.current && meshRef.current) {
-        const nowMs = performance.now();
-        const dt = Math.max((nowMs - lastDragTimeMs.current) / 1000, 1 / 240);
-        const velocity = getMeshVelocity(meshRef.current);
-        const angularVelocity = getMeshAngularVelocity(meshRef.current);
-        const physics = getMeshPhysics(meshRef.current);
-        const releaseVel = new THREE.Vector3()
-          .copy(meshRef.current.position)
-          .sub(lastDragPos.current)
-          .multiplyScalar(1 / dt);
-        const response = 1 / (0.55 + 0.45 * physics.mass);
-        velocity.lerp(releaseVel, 0.7 * response);
-        const inertia = getMeshApproxInertia(meshRef.current, physics.mass);
-        const torqueFromRelease = new THREE.Vector3()
-          .copy(grabLeverArm.current)
-          .cross(releaseVel)
-          .multiplyScalar(0.22 / inertia);
-        angularVelocity.lerp(torqueFromRelease, 0.55 * response);
+        const applyInertia = roomPhysicsEnabled && throwInertiaEnabled;
+        if (applyInertia) {
+          const nowMs = performance.now();
+          const dt = Math.max((nowMs - lastDragTimeMs.current) / 1000, 1 / 240);
+          const velocity = getMeshVelocity(meshRef.current);
+          const angularVelocity = getMeshAngularVelocity(meshRef.current);
+          const physics = getMeshPhysics(meshRef.current);
+          const releaseVel = new THREE.Vector3()
+            .copy(meshRef.current.position)
+            .sub(lastDragPos.current)
+            .multiplyScalar(1 / dt);
+          const response = 1 / (0.55 + 0.45 * physics.mass);
+          velocity.lerp(releaseVel, 0.7 * response);
+          const inertia = getMeshApproxInertia(meshRef.current, physics.mass);
+          const torqueFromRelease = new THREE.Vector3()
+            .copy(grabLeverArm.current)
+            .cross(releaseVel)
+            .multiplyScalar(0.22 / inertia);
+          angularVelocity.lerp(torqueFromRelease, 0.55 * response);
+        } else {
+          const velocity = getMeshVelocity(meshRef.current);
+          const angularVelocity = getMeshAngularVelocity(meshRef.current);
+          velocity.set(0, 0, 0);
+          angularVelocity.set(0, 0, 0);
+        }
       }
       isDragging.current = false;
       canvas.style.cursor = isHovered.current ? 'grab' : 'default';
@@ -1475,10 +1566,15 @@ const DraggableObject = ({
       clampMeshToRoom(meshRef.current);
       const velocity = getMeshVelocity(meshRef.current);
       const angularVelocity = getMeshAngularVelocity(meshRef.current);
-      const physics = getMeshPhysics(meshRef.current);
-      const response = 1 / (0.55 + 0.45 * physics.mass);
-      velocity.z -= e.deltaY * 0.09 * response;
-      angularVelocity.x += e.deltaY * 0.0025 * response;
+      if (roomPhysicsEnabled && throwInertiaEnabled) {
+        const physics = getMeshPhysics(meshRef.current);
+        const response = 1 / (0.55 + 0.45 * physics.mass);
+        velocity.z -= e.deltaY * 0.09 * response;
+        angularVelocity.x += e.deltaY * 0.0025 * response;
+      } else {
+        velocity.set(0, 0, 0);
+        angularVelocity.set(0, 0, 0);
+      }
       // Keep drag plane in sync with new depth
       if (isDragging.current) {
         dragPlane.current.constant = -meshRef.current.position.z;
@@ -1493,7 +1589,7 @@ const DraggableObject = ({
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('wheel', onWheel);
     };
-  }, [camera, gl, raycaster]);
+  }, [camera, gl, raycaster, roomPhysicsEnabled, throwInertiaEnabled]);
 
   return (
     <mesh
@@ -1531,12 +1627,23 @@ const DraggableObject = ({
 // Two small shadow-casting dots on the screen plane (z≈0), one per fingertip.
 // Grab aims a world-space ray camera → pinch point on that plane. NDC + project()
 // fights CameraRig’s off-axis projection; mouse drag still uses canvas NDC.
-const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitivity: number }) => {
+const FingerDots = ({
+  pinchData,
+  sensitivity,
+  roomPhysicsEnabled,
+  throwInertiaEnabled,
+}: {
+  pinchData: PinchData;
+  sensitivity: number;
+  roomPhysicsEnabled: boolean;
+  throwInertiaEnabled: boolean;
+}) => {
   const { camera, raycaster } = useThree();
   const pinchRef = useRef(pinchData);
   pinchRef.current = pinchData;
   const sensRef = useRef(sensitivity);
   sensRef.current = sensitivity;
+  const applyInertia = roomPhysicsEnabled && throwInertiaEnabled;
 
   const thumbRef    = useRef<THREE.Mesh>(null!);
   const indexRef    = useRef<THREE.Mesh>(null!);
@@ -1595,23 +1702,30 @@ const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitiv
     if (!p.hasHand) {
       if (grabbedMesh.current) {
         wakeMesh(grabbedMesh.current);
-        const nowMs = performance.now();
-        const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
-        const velocity = getMeshVelocity(grabbedMesh.current);
-        const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
-        const physics = getMeshPhysics(grabbedMesh.current);
-        const releaseVel = new THREE.Vector3()
-          .copy(grabbedMesh.current.position)
-          .sub(lastFingerDragPos.current)
-          .multiplyScalar(1 / dt);
-        const response = 1 / (0.55 + 0.45 * physics.mass);
-        velocity.lerp(releaseVel, 0.68 * response);
-        const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
-        const torqueFromRelease = new THREE.Vector3()
-          .copy(fingerGrabLeverArm.current)
-          .cross(releaseVel)
-          .multiplyScalar(0.2 / inertia);
-        angularVelocity.lerp(torqueFromRelease, 0.5 * response);
+        if (applyInertia) {
+          const nowMs = performance.now();
+          const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
+          const velocity = getMeshVelocity(grabbedMesh.current);
+          const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
+          const physics = getMeshPhysics(grabbedMesh.current);
+          const releaseVel = new THREE.Vector3()
+            .copy(grabbedMesh.current.position)
+            .sub(lastFingerDragPos.current)
+            .multiplyScalar(1 / dt);
+          const response = 1 / (0.55 + 0.45 * physics.mass);
+          velocity.lerp(releaseVel, 0.68 * response);
+          const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
+          const torqueFromRelease = new THREE.Vector3()
+            .copy(fingerGrabLeverArm.current)
+            .cross(releaseVel)
+            .multiplyScalar(0.2 / inertia);
+          angularVelocity.lerp(torqueFromRelease, 0.5 * response);
+        } else {
+          const velocity = getMeshVelocity(grabbedMesh.current);
+          const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
+          velocity.set(0, 0, 0);
+          angularVelocity.set(0, 0, 0);
+        }
         fingerGrabbedRegistry.delete(grabbedMesh.current);
         grabbedMesh.current = null;
       }
@@ -1709,23 +1823,30 @@ const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitiv
         releaseStreak.current += 1;
         if (releaseStreak.current >= GRAB_RELEASE_GRACE_FRAMES) {
           wakeMesh(grabbedMesh.current);
-          const nowMs = performance.now();
-          const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
-          const velocity = getMeshVelocity(grabbedMesh.current);
-          const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
-          const physics = getMeshPhysics(grabbedMesh.current);
-          const releaseVel = new THREE.Vector3()
-            .copy(grabbedMesh.current.position)
-            .sub(lastFingerDragPos.current)
-            .multiplyScalar(1 / dt);
-          const response = 1 / (0.55 + 0.45 * physics.mass);
-          velocity.lerp(releaseVel, 0.68 * response);
-          const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
-          const torqueFromRelease = new THREE.Vector3()
-            .copy(fingerGrabLeverArm.current)
-            .cross(releaseVel)
-            .multiplyScalar(0.2 / inertia);
-          angularVelocity.lerp(torqueFromRelease, 0.5 * response);
+          if (applyInertia) {
+            const nowMs = performance.now();
+            const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
+            const velocity = getMeshVelocity(grabbedMesh.current);
+            const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
+            const physics = getMeshPhysics(grabbedMesh.current);
+            const releaseVel = new THREE.Vector3()
+              .copy(grabbedMesh.current.position)
+              .sub(lastFingerDragPos.current)
+              .multiplyScalar(1 / dt);
+            const response = 1 / (0.55 + 0.45 * physics.mass);
+            velocity.lerp(releaseVel, 0.68 * response);
+            const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
+            const torqueFromRelease = new THREE.Vector3()
+              .copy(fingerGrabLeverArm.current)
+              .cross(releaseVel)
+              .multiplyScalar(0.2 / inertia);
+            angularVelocity.lerp(torqueFromRelease, 0.5 * response);
+          } else {
+            const velocity = getMeshVelocity(grabbedMesh.current);
+            const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
+            velocity.set(0, 0, 0);
+            angularVelocity.set(0, 0, 0);
+          }
           fingerGrabbedRegistry.delete(grabbedMesh.current);
           grabbedMesh.current = null;
           wasGrabbing.current = false;
@@ -1811,25 +1932,30 @@ const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitiv
           grabStartObjectZ.current + (pinchDepthDelta + scaleDepthDelta) * DEPTH_DRAG_GAIN * depthScaleMultiplier;
         grabbedMesh.current.position.z = clamp(targetZ, DRAG_BACK_Z_LIMIT, DRAG_FRONT_Z_LIMIT);
         clampMeshToRoom(grabbedMesh.current, DRAG_FRONT_Z_LIMIT, DRAG_BACK_Z_LIMIT);
-        const nowMs = performance.now();
-        const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
-        const velocity = getMeshVelocity(grabbedMesh.current);
-        const physics = getMeshPhysics(grabbedMesh.current);
-        const sampleVel = new THREE.Vector3()
-          .copy(grabbedMesh.current.position)
-          .sub(lastFingerDragPos.current)
-          .multiplyScalar(1 / dt);
-        const response = 1 / (0.55 + 0.45 * physics.mass);
-        velocity.lerp(sampleVel, 0.5 * response);
-        const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
-        const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
-        const torqueFromDrag = new THREE.Vector3()
-          .copy(fingerGrabLeverArm.current)
-          .cross(sampleVel)
-          .multiplyScalar(0.16 / inertia);
-        angularVelocity.lerp(torqueFromDrag, 0.38 * response);
-        lastFingerDragPos.current.copy(grabbedMesh.current.position);
-        lastFingerDragTimeMs.current = nowMs;
+        if (applyInertia) {
+          const nowMs = performance.now();
+          const dt = Math.max((nowMs - lastFingerDragTimeMs.current) / 1000, 1 / 240);
+          const velocity = getMeshVelocity(grabbedMesh.current);
+          const physics = getMeshPhysics(grabbedMesh.current);
+          const sampleVel = new THREE.Vector3()
+            .copy(grabbedMesh.current.position)
+            .sub(lastFingerDragPos.current)
+            .multiplyScalar(1 / dt);
+          const response = 1 / (0.55 + 0.45 * physics.mass);
+          velocity.lerp(sampleVel, 0.5 * response);
+          const angularVelocity = getMeshAngularVelocity(grabbedMesh.current);
+          const inertia = getMeshApproxInertia(grabbedMesh.current, physics.mass);
+          const torqueFromDrag = new THREE.Vector3()
+            .copy(fingerGrabLeverArm.current)
+            .cross(sampleVel)
+            .multiplyScalar(0.16 / inertia);
+          angularVelocity.lerp(torqueFromDrag, 0.38 * response);
+          lastFingerDragPos.current.copy(grabbedMesh.current.position);
+          lastFingerDragTimeMs.current = nowMs;
+        } else {
+          lastFingerDragPos.current.copy(grabbedMesh.current.position);
+          lastFingerDragTimeMs.current = performance.now();
+        }
       }
     }
   });
@@ -2075,40 +2201,44 @@ const HDRIEnvironment = ({ url }: { url: string }) => {
 
 // ── Draggable scene objects ───────────────────────────────────────────────────
 const SceneObjects = ({
-  gravityEnabled,
+  roomPhysicsEnabled,
+  gravityForceEnabled,
   gravityStrength,
   restitution,
+  throwInertiaEnabled,
   collection,
 }: {
-  gravityEnabled: boolean;
+  roomPhysicsEnabled: boolean;
+  gravityForceEnabled: boolean;
   gravityStrength: number;
   restitution: number;
+  throwInertiaEnabled: boolean;
   collection: ObjectCollectionId;
 }) => {
   if (collection === "dense") {
     return (
       <>
-        <DraggableObject position={[5.6, -4.2, -12]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={0.8} linearDamping={0.2} angularDamping={0.66} surfaceFriction={0.35}>
+        <DraggableObject position={[5.6, -4.2, -12]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={0.8} linearDamping={0.2} angularDamping={0.66} surfaceFriction={0.35}>
           <icosahedronGeometry args={[2.1, 0]} />
           <meshStandardMaterial color="#f26ae6" roughness={0.2} metalness={0.6} />
         </DraggableObject>
-        <DraggableObject position={[-5.8, -4.3, -16]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={2.7} linearDamping={0.38} angularDamping={1.12} surfaceFriction={0.66}>
+        <DraggableObject position={[-5.8, -4.3, -16]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.7} linearDamping={0.38} angularDamping={1.12} surfaceFriction={0.66}>
           <boxGeometry args={[4.4, 4.4, 4.4]} />
           <meshStandardMaterial color="#6f86ff" roughness={0.42} metalness={0.68} />
         </DraggableObject>
-        <DraggableObject position={[0.8, -3.5, -25]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={1.2} linearDamping={0.24} angularDamping={0.76} surfaceFriction={0.44}>
+        <DraggableObject position={[0.8, -3.5, -25]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.2} linearDamping={0.24} angularDamping={0.76} surfaceFriction={0.44}>
           <dodecahedronGeometry args={[2.6, 0]} />
           <meshStandardMaterial color="#44d2ff" roughness={0.32} metalness={0.4} />
         </DraggableObject>
-        <DraggableObject position={[7.3, -4.4, -34]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={1.5} linearDamping={0.26} angularDamping={0.84} surfaceFriction={0.48}>
+        <DraggableObject position={[7.3, -4.4, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.5} linearDamping={0.26} angularDamping={0.84} surfaceFriction={0.48}>
           <sphereGeometry args={[2.8, 48, 48]} />
           <meshStandardMaterial color="#ff9854" roughness={0.58} metalness={0.12} />
         </DraggableObject>
-        <DraggableObject position={[-7.2, -3.9, -44]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={2} linearDamping={0.31} angularDamping={0.95} surfaceFriction={0.6}>
+        <DraggableObject position={[-7.2, -3.9, -44]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2} linearDamping={0.31} angularDamping={0.95} surfaceFriction={0.6}>
           <torusGeometry args={[2.4, 0.8, 28, 36]} />
           <meshStandardMaterial color="#7ce9aa" roughness={0.24} metalness={0.55} />
         </DraggableObject>
-        <DraggableObject position={[0.2, 1.2, -59]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={2.2} linearDamping={0.32} angularDamping={1.03} surfaceFriction={0.58}>
+        <DraggableObject position={[0.2, 1.2, -59]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.2} linearDamping={0.32} angularDamping={1.03} surfaceFriction={0.58}>
           <torusKnotGeometry args={[2.2, 0.64, 120, 22]} />
           <meshStandardMaterial color="#66f4d6" roughness={0.08} metalness={0.84} />
         </DraggableObject>
@@ -2119,27 +2249,27 @@ const SceneObjects = ({
   if (collection === "chaos") {
     return (
       <>
-        <DraggableObject position={[0, -4.2, -10]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={4.4} linearDamping={0.46} angularDamping={1.22} surfaceFriction={0.82}>
+        <DraggableObject position={[0, -4.2, -10]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={4.4} linearDamping={0.46} angularDamping={1.22} surfaceFriction={0.82}>
           <cylinderGeometry args={[3.1, 3.1, 2.8, 36]} />
           <meshStandardMaterial color="#8d7aff" roughness={0.52} metalness={0.42} />
         </DraggableObject>
-        <DraggableObject position={[0.2, 2.4, -21]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={0.6} linearDamping={0.14} angularDamping={0.58} surfaceFriction={0.22}>
+        <DraggableObject position={[0.2, 2.4, -21]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={0.6} linearDamping={0.14} angularDamping={0.58} surfaceFriction={0.22}>
           <tetrahedronGeometry args={[2.9, 0]} />
           <meshStandardMaterial color="#ff6d9e" roughness={0.26} metalness={0.35} />
         </DraggableObject>
-        <DraggableObject position={[-6.8, -2.1, -28]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={1} linearDamping={0.21} angularDamping={0.72} surfaceFriction={0.36}>
+        <DraggableObject position={[-6.8, -2.1, -28]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1} linearDamping={0.21} angularDamping={0.72} surfaceFriction={0.36}>
           <coneGeometry args={[2.5, 5.4, 22]} />
           <meshStandardMaterial color="#7bd3ff" roughness={0.3} metalness={0.46} />
         </DraggableObject>
-        <DraggableObject position={[6.8, -2.3, -34]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={2.8} linearDamping={0.35} angularDamping={1.08} surfaceFriction={0.72}>
+        <DraggableObject position={[6.8, -2.3, -34]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={2.8} linearDamping={0.35} angularDamping={1.08} surfaceFriction={0.72}>
           <boxGeometry args={[5.2, 2.2, 5.2]} />
           <meshStandardMaterial color="#90a8ff" roughness={0.48} metalness={0.62} />
         </DraggableObject>
-        <DraggableObject position={[-2.2, 2, -47]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={1.6} linearDamping={0.28} angularDamping={0.88} surfaceFriction={0.54}>
+        <DraggableObject position={[-2.2, 2, -47]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.6} linearDamping={0.28} angularDamping={0.88} surfaceFriction={0.54}>
           <torusKnotGeometry args={[1.8, 0.58, 128, 24]} />
           <meshStandardMaterial color="#53f0cb" roughness={0.14} metalness={0.82} />
         </DraggableObject>
-        <DraggableObject position={[3.8, -3.8, -57]} gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} mass={1.3} linearDamping={0.2} angularDamping={0.74} surfaceFriction={0.39}>
+        <DraggableObject position={[3.8, -3.8, -57]} roomPhysicsEnabled={roomPhysicsEnabled} gravityForceEnabled={gravityForceEnabled} gravityStrength={gravityStrength} restitution={restitution} throwInertiaEnabled={throwInertiaEnabled} mass={1.3} linearDamping={0.2} angularDamping={0.74} surfaceFriction={0.39}>
           <sphereGeometry args={[3.1, 56, 56]} />
           <meshStandardMaterial color="#ffb35f" roughness={0.63} metalness={0.1} />
         </DraggableObject>
@@ -2152,9 +2282,11 @@ const SceneObjects = ({
       {/* Close — polished pink gem */}
       <DraggableObject
         position={[3, -2, -6]}
-        gravityEnabled={gravityEnabled}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
         gravityStrength={gravityStrength}
         restitution={restitution}
+        throwInertiaEnabled={throwInertiaEnabled}
         mass={0.9}
         linearDamping={0.18}
         angularDamping={0.68}
@@ -2167,9 +2299,11 @@ const SceneObjects = ({
       {/* Mid — brushed blue metal box */}
       <DraggableObject
         position={[-6.2, -3.8, -22]}
-        gravityEnabled={gravityEnabled}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
         gravityStrength={gravityStrength}
         restitution={restitution}
+        throwInertiaEnabled={throwInertiaEnabled}
         mass={2.4}
         linearDamping={0.34}
         angularDamping={1.08}
@@ -2182,9 +2316,11 @@ const SceneObjects = ({
       {/* Far — warm matte sphere */}
       <DraggableObject
         position={[6.5, -4.4, -38]}
-        gravityEnabled={gravityEnabled}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
         gravityStrength={gravityStrength}
         restitution={restitution}
+        throwInertiaEnabled={throwInertiaEnabled}
         mass={1.4}
         linearDamping={0.24}
         angularDamping={0.78}
@@ -2197,9 +2333,11 @@ const SceneObjects = ({
       {/* Deepest — glassy torus knot with slight emissive */}
       <DraggableObject
         position={[0.4, 0.6, -56]}
-        gravityEnabled={gravityEnabled}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
         gravityStrength={gravityStrength}
         restitution={restitution}
+        throwInertiaEnabled={throwInertiaEnabled}
         mass={2.1}
         linearDamping={0.3}
         angularDamping={0.96}
@@ -2289,16 +2427,32 @@ const Lights = () => {
 };
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
-const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSensitivity, gravityEnabled, gravityStrength, restitution, objectCollection, objectResetToken }: {
+const Scene = ({
+  headPose,
+  pinchData,
+  overlayRect,
+  fingerGrab,
+  hdriUrl,
+  fingerSensitivity,
+  roomPhysicsEnabled,
+  gravityForceEnabled,
+  gravityStrength,
+  restitution,
+  throwInertiaEnabled,
+  objectCollection,
+  objectResetToken,
+}: {
   headPose: HeadPose;
   pinchData: PinchData;
   overlayRect: DOMRect | null;
   fingerGrab: boolean;
   hdriUrl: string;
   fingerSensitivity: number;
-  gravityEnabled: boolean;
+  roomPhysicsEnabled: boolean;
+  gravityForceEnabled: boolean;
   gravityStrength: number;
   restitution: number;
+  throwInertiaEnabled: boolean;
   objectCollection: ObjectCollectionId;
   objectResetToken: number;
 }) => (
@@ -2312,13 +2466,22 @@ const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSe
     <RoomBoxOutline />
     <SceneObjects
       key={`${objectCollection}-${objectResetToken}`}
-      gravityEnabled={gravityEnabled}
+      roomPhysicsEnabled={roomPhysicsEnabled}
+      gravityForceEnabled={gravityForceEnabled}
       gravityStrength={gravityStrength}
       restitution={restitution}
+      throwInertiaEnabled={throwInertiaEnabled}
       collection={objectCollection}
     />
     <UIShadowPlane rect={overlayRect} />
-    {fingerGrab && <FingerDots pinchData={pinchData} sensitivity={fingerSensitivity} />}
+    {fingerGrab && (
+      <FingerDots
+        pinchData={pinchData}
+        sensitivity={fingerSensitivity}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        throwInertiaEnabled={throwInertiaEnabled}
+      />
+    )}
     <OrbitControls enablePan={false} enableZoom={false} enableRotate={false} />
     <EffectComposer multisampling={4}>
       <Vignette
@@ -2367,15 +2530,47 @@ const App = () => {
     cameraOffsetN: persistedSettings.cameraOffsetN,
   });
   const [fingerGrab, setFingerGrab] = useState(persistedSettings.fingerGrab);
-  const [gravityEnabled, setGravityEnabled] = useState(persistedSettings.gravityEnabled);
+  const [roomPhysicsEnabled, setRoomPhysicsEnabled] = useState(persistedSettings.roomPhysicsEnabled);
+  const [gravityForceEnabled, setGravityForceEnabled] = useState(persistedSettings.gravityForceEnabled);
   const [gravityStrength, setGravityStrength] = useState(persistedSettings.gravityStrength);
   const [restitution, setRestitution] = useState(persistedSettings.restitution);
+  const [throwInertiaEnabled, setThrowInertiaEnabled] = useState(persistedSettings.throwInertiaEnabled);
   const [objectCollection, setObjectCollection] = useState<ObjectCollectionId>(
     persistedSettings.objectCollection
   );
   const [settingsCollapsed, setSettingsCollapsed] = useState(persistedSettings.settingsCollapsed);
+  const [advancedSettingsExpanded, setAdvancedSettingsExpanded] = useState(
+    persistedSettings.advancedSettingsExpanded
+  );
   const [overlayRect, setOverlayRect] = useState<DOMRect | null>(null);
   const overlayRef = useRef<HTMLElement>(null);
+
+  const [viewportNarrow, setViewportNarrow] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 768px)").matches : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 768px)");
+    const onChange = () => setViewportNarrow(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  const isMobileDevice = useMemo(
+    () =>
+      typeof navigator !== "undefined" &&
+      (/Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || viewportNarrow),
+    [viewportNarrow]
+  );
+
+  const allowHeavyFeatures = !isMobileDevice;
+
+  useEffect(() => {
+    if (!isMobileDevice) return;
+    setFingerGrab(false);
+    setRoomPhysicsEnabled(false);
+    setGravityForceEnabled(false);
+    setThrowInertiaEnabled(false);
+  }, [isMobileDevice]);
 
   const {
     videoRef,
@@ -2408,11 +2603,14 @@ const App = () => {
       cameraOffsetMode: params.cameraOffsetMode,
       cameraOffsetN: params.cameraOffsetN,
       fingerGrab,
-      gravityEnabled,
+      roomPhysicsEnabled,
+      gravityForceEnabled,
       gravityStrength,
       restitution,
+      throwInertiaEnabled,
       objectCollection,
       settingsCollapsed,
+      advancedSettingsExpanded,
     };
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
   }, [
@@ -2421,11 +2619,14 @@ const App = () => {
     params.cameraOffsetMode,
     params.cameraOffsetN,
     fingerGrab,
-    gravityEnabled,
+    roomPhysicsEnabled,
+    gravityForceEnabled,
     gravityStrength,
     restitution,
+    throwInertiaEnabled,
     objectCollection,
     settingsCollapsed,
+    advancedSettingsExpanded,
   ]);
 
   const resetSettings = () => {
@@ -2437,11 +2638,14 @@ const App = () => {
       cameraOffsetN: defaults.cameraOffsetN,
     });
     setFingerGrab(defaults.fingerGrab);
-    setGravityEnabled(defaults.gravityEnabled);
+    setRoomPhysicsEnabled(defaults.roomPhysicsEnabled);
+    setGravityForceEnabled(defaults.gravityForceEnabled);
     setGravityStrength(defaults.gravityStrength);
     setRestitution(defaults.restitution);
+    setThrowInertiaEnabled(defaults.throwInertiaEnabled);
     setObjectCollection(defaults.objectCollection);
     setSettingsCollapsed(defaults.settingsCollapsed);
+    setAdvancedSettingsExpanded(defaults.advancedSettingsExpanded);
     setAutoRecalibrateToken((v) => v + 1);
   };
 
@@ -2454,9 +2658,11 @@ const App = () => {
         fingerGrab={fingerGrab}
         hdriUrl={DEFAULT_HDRI}
         fingerSensitivity={params.sensitivity}
-        gravityEnabled={gravityEnabled}
+        roomPhysicsEnabled={roomPhysicsEnabled}
+        gravityForceEnabled={gravityForceEnabled}
         gravityStrength={gravityStrength}
         restitution={restitution}
+        throwInertiaEnabled={throwInertiaEnabled}
         objectCollection={objectCollection}
         objectResetToken={objectResetToken}
       />
@@ -2540,19 +2746,7 @@ const App = () => {
               />
             </div>
 
-            <label className="slider-row toggle-row" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(108,130,162,0.25)' }}>
-              <span className="slider-label" style={{ color: '#f5a623' }}>⚗ Finger grab</span>
-              <button
-                className={`toggle-btn ${fingerGrab ? "toggle-btn-on" : ""}`}
-                onClick={() => setFingerGrab(v => !v)}
-              >
-                {fingerGrab
-                  ? (trackingState.pinchData.isPinching ? 'ON — grabbing' : trackingState.pinchData.hasHand ? 'ON — hand tracked' : 'ON — no hand')
-                  : 'OFF (experimental)'}
-              </button>
-            </label>
-
-            <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
+            <label className="slider-row toggle-row" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid rgba(108,130,162,0.25)" }}>
               <span className="slider-label" style={{ color: "#d7c39d" }}>Objects</span>
               <select
                 className="light-select"
@@ -2565,35 +2759,145 @@ const App = () => {
               </select>
             </label>
 
-            <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
-              <span className="slider-label" style={{ color: '#a7b8d8' }}>Gravity</span>
-              <button
-                className={`toggle-btn ${gravityEnabled ? "toggle-btn-on" : ""}`}
-                onClick={() => setGravityEnabled(v => !v)}
-              >
-                {gravityEnabled ? (gravityStrength <= 0 ? "ON — zero-g drift" : "ON — room collision") : "OFF"}
-              </button>
-            </label>
+            <button
+              type="button"
+              className="advanced-settings-toggle"
+              aria-expanded={advancedSettingsExpanded}
+              onClick={() => setAdvancedSettingsExpanded((v) => !v)}
+            >
+              Advanced settings
+              <span className="tracker-collapse-indicator">{advancedSettingsExpanded ? "hide" : "show"}</span>
+            </button>
 
-            {gravityEnabled && (
-              <>
-                <Slider
-                  label="Gravity"
-                  value={gravityStrength}
-                  min={0}
-                  max={220}
-                  step={2}
-                  onChange={setGravityStrength}
-                />
-                <Slider
-                  label="Bounce"
-                  value={restitution}
-                  min={0}
-                  max={0.95}
-                  step={0.01}
-                  onChange={setRestitution}
-                />
-              </>
+            {advancedSettingsExpanded && (
+              <div className="advanced-settings-block">
+                {!allowHeavyFeatures && (
+                  <p className="advanced-settings-mobile-hint">
+                    Heavy options are disabled on small or touch devices.
+                  </p>
+                )}
+
+                <label className="slider-row toggle-row">
+                  <span className="slider-label" title={!allowHeavyFeatures ? "Not available on this device" : undefined}>
+                    Finger grab <span className="settings-cpu-tag">CPU</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!allowHeavyFeatures}
+                    className={`toggle-btn ${fingerGrab ? "toggle-btn-on" : ""}`}
+                    title={!allowHeavyFeatures ? "Not available on mobile / narrow viewports" : undefined}
+                    onClick={() => allowHeavyFeatures && setFingerGrab((v) => !v)}
+                  >
+                    {fingerGrab
+                      ? trackingState.pinchData.isPinching
+                        ? "ON — grabbing"
+                        : trackingState.pinchData.hasHand
+                          ? "ON — hand tracked"
+                          : "ON — no hand"
+                      : "OFF"}
+                  </button>
+                </label>
+
+                <label className="slider-row toggle-row">
+                  <span className="slider-label" title={!allowHeavyFeatures ? "Not available on this device" : undefined}>
+                    Room physics <span className="settings-cpu-tag">CPU</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!allowHeavyFeatures}
+                    className={`toggle-btn ${roomPhysicsEnabled ? "toggle-btn-on" : ""}`}
+                    title={!allowHeavyFeatures ? "Not available on mobile / narrow viewports" : "Collision, bounce, damping, sleep"}
+                    onClick={() => {
+                      if (!allowHeavyFeatures) return;
+                      setRoomPhysicsEnabled((v) => {
+                        const next = !v;
+                        if (!next) {
+                          setGravityForceEnabled(false);
+                          setThrowInertiaEnabled(false);
+                        }
+                        return next;
+                      });
+                    }}
+                  >
+                    {roomPhysicsEnabled ? "ON — walls + floor" : "OFF"}
+                  </button>
+                </label>
+
+                <label className="slider-row toggle-row">
+                  <span
+                    className="slider-label"
+                    title={
+                      !allowHeavyFeatures
+                        ? "Not available on this device"
+                        : !roomPhysicsEnabled
+                          ? "Turn on Room physics first"
+                          : undefined
+                    }
+                  >
+                    Downward gravity <span className="settings-cpu-tag">CPU</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!allowHeavyFeatures || !roomPhysicsEnabled}
+                    className={`toggle-btn ${gravityForceEnabled ? "toggle-btn-on" : ""}`}
+                    onClick={() =>
+                      allowHeavyFeatures && roomPhysicsEnabled && setGravityForceEnabled((v) => !v)
+                    }
+                  >
+                    {gravityForceEnabled
+                      ? gravityStrength <= 0
+                        ? "ON — strength 0"
+                        : "ON"
+                      : "OFF"}
+                  </button>
+                </label>
+
+                <label className="slider-row toggle-row">
+                  <span
+                    className="slider-label"
+                    title={
+                      !allowHeavyFeatures
+                        ? "Not available on this device"
+                        : !roomPhysicsEnabled
+                          ? "Turn on Room physics first"
+                          : undefined
+                    }
+                  >
+                    Throw inertia <span className="settings-cpu-tag">CPU</span>
+                  </span>
+                  <button
+                    type="button"
+                    disabled={!allowHeavyFeatures || !roomPhysicsEnabled}
+                    className={`toggle-btn ${throwInertiaEnabled ? "toggle-btn-on" : ""}`}
+                    onClick={() =>
+                      allowHeavyFeatures && roomPhysicsEnabled && setThrowInertiaEnabled((v) => !v)
+                    }
+                  >
+                    {throwInertiaEnabled ? "ON — mouse / hand" : "OFF"}
+                  </button>
+                </label>
+
+                {roomPhysicsEnabled && (
+                  <>
+                    <Slider
+                      label="Gravity strength"
+                      value={gravityStrength}
+                      min={0}
+                      max={220}
+                      step={2}
+                      onChange={setGravityStrength}
+                    />
+                    <Slider
+                      label="Bounce"
+                      value={restitution}
+                      min={0}
+                      max={0.95}
+                      step={0.01}
+                      onChange={setRestitution}
+                    />
+                  </>
+                )}
+              </div>
             )}
 
             <div className="settings-actions">

@@ -335,3 +335,63 @@ body,
 .hdri-load-btn:hover {
   background: #4a5a7a;
 }
+
+.advanced-settings-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding: 6px 8px;
+  background: rgba(20, 28, 44, 0.55);
+  border: 1px solid rgba(108, 130, 162, 0.35);
+  border-radius: 6px;
+  color: #c8d4f0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.advanced-settings-toggle:hover {
+  background: rgba(28, 38, 58, 0.75);
+  border-color: rgba(130, 160, 200, 0.45);
+}
+
+.advanced-settings-block {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(108, 130, 162, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.advanced-settings-mobile-hint {
+  margin: 0 0 4px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: #9aa8c4;
+}
+
+.settings-cpu-tag {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffb86c;
+  background: rgba(255, 140, 80, 0.12);
+  border: 1px solid rgba(255, 160, 100, 0.35);
+  vertical-align: middle;
+}
+
+.toggle-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
