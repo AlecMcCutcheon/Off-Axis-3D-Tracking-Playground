@@ -765,7 +765,9 @@ const draggableRegistry = new Set<THREE.Mesh>();
 const fingerGrabbedRegistry = new Set<THREE.Mesh>();
 const ROOM_HALF_WIDTH = SCREEN_WIDTH_CM / 2;
 const ROOM_HALF_HEIGHT = SCREEN_HEIGHT_CM / 2;
-const ROOM_FRONT_Z = 6;
+// Allow objects to come closer to the camera (past viewport z=0) before
+// hitting the front collision wall.
+const ROOM_FRONT_Z = 12;
 const ROOM_BACK_Z = -BOX_DEPTH_CM;
 const ROOM_COLLISION_EPS = 0.1;
 
@@ -1540,7 +1542,7 @@ const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitiv
   const GRAB_Z_TOLERANCE = 9.5;
   const GRAB_RELEASE_GRACE_FRAMES = 8;
   const DOT_FRONT_Z_LIMIT = 10;
-  const DRAG_FRONT_Z_LIMIT = ROOM_FRONT_Z - 0.4;
+  const DRAG_FRONT_Z_LIMIT = ROOM_FRONT_Z - ROOM_COLLISION_EPS;
   const DRAG_BACK_Z_LIMIT = ROOM_BACK_Z + ROOM_COLLISION_EPS;
   const DOT_BACK_Z_LIMIT = ROOM_BACK_Z + ROOM_COLLISION_EPS;
   const DEPTH_DRAG_GAIN = BOX_DEPTH_CM * 4.1;
