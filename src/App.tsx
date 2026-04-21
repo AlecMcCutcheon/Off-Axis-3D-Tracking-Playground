@@ -765,11 +765,13 @@ const draggableRegistry = new Set<THREE.Mesh>();
 const fingerGrabbedRegistry = new Set<THREE.Mesh>();
 const ROOM_HALF_WIDTH = SCREEN_WIDTH_CM / 2;
 const ROOM_HALF_HEIGHT = SCREEN_HEIGHT_CM / 2;
-// Allow objects to come closer to the camera (past viewport z=0) before
-// hitting the front collision wall.
-const ROOM_FRONT_Z = 12;
+// Push the front collision wall far enough that front bounces happen out of
+// view for normal head/camera positions.
+const ROOM_FRONT_Z = 140;
 const ROOM_BACK_Z = -BOX_DEPTH_CM;
 const ROOM_COLLISION_EPS = 0.1;
+const VIEWPLANE_GUARD_Z = -0.8;
+const VIEWPLANE_SIDE_INSET = 0.7;
 
 interface MeshWorldExtrema {
   minX: number;
@@ -1180,6 +1182,38 @@ const resolveMeshRoomCollision = (
       );
     }
   }
+  ext = getMeshWorldExtrema(mesh);
+
+  // Near the view plane, apply side guard rails so objects cannot slip around
+  // the room opening and bounce out through edge cases.
+  if (ext.maxZ > VIEWPLANE_GUARD_Z) {
+    const guardMinX = minX + VIEWPLANE_SIDE_INSET;
+    const guardMaxX = maxX - VIEWPLANE_SIDE_INSET;
+    const guardTangentDamping = clamp(tangentDamping * 0.95, 0.42, 0.95);
+
+    if (ext.minX < guardMinX) {
+      touchingBoundary = true;
+      mesh.position.x += guardMinX - ext.minX;
+      if (velocity.x < 0) {
+        const preImpact = velocity.clone();
+        velocity.x = reflectNormalVelocity(preImpact.x);
+        velocity.y *= guardTangentDamping;
+        velocity.z *= guardTangentDamping;
+      }
+    }
+    ext = getMeshWorldExtrema(mesh);
+
+    if (ext.maxX > guardMaxX) {
+      touchingBoundary = true;
+      mesh.position.x -= ext.maxX - guardMaxX;
+      if (velocity.x > 0) {
+        const preImpact = velocity.clone();
+        velocity.x = reflectNormalVelocity(preImpact.x);
+        velocity.y *= guardTangentDamping;
+        velocity.z *= guardTangentDamping;
+      }
+    }
+  }
 
   // Keep objects stably supported by the floor while spinning/settling.
   ext = getMeshWorldExtrema(mesh);
@@ -1541,7 +1575,7 @@ const FingerDots = ({ pinchData, sensitivity }: { pinchData: PinchData; sensitiv
   const GRAB_PINCH_XY_RADIUS = 4.8;
   const GRAB_Z_TOLERANCE = 9.5;
   const GRAB_RELEASE_GRACE_FRAMES = 8;
-  const DOT_FRONT_Z_LIMIT = 10;
+  const DOT_FRONT_Z_LIMIT = ROOM_FRONT_Z - ROOM_COLLISION_EPS;
   const DRAG_FRONT_Z_LIMIT = ROOM_FRONT_Z - ROOM_COLLISION_EPS;
   const DRAG_BACK_Z_LIMIT = ROOM_BACK_Z + ROOM_COLLISION_EPS;
   const DOT_BACK_Z_LIMIT = ROOM_BACK_Z + ROOM_COLLISION_EPS;
@@ -2255,7 +2289,7 @@ const Lights = () => {
 };
 
 // ── Scene ─────────────────────────────────────────────────────────────────────
-const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSensitivity, gravityEnabled, gravityStrength, restitution, objectCollection }: {
+const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSensitivity, gravityEnabled, gravityStrength, restitution, objectCollection, objectResetToken }: {
   headPose: HeadPose;
   pinchData: PinchData;
   overlayRect: DOMRect | null;
@@ -2266,6 +2300,7 @@ const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSe
   gravityStrength: number;
   restitution: number;
   objectCollection: ObjectCollectionId;
+  objectResetToken: number;
 }) => (
   <Canvas shadows="variance" camera={{ position: [0, 0, DEFAULT_HEAD_Z_CM], near: NEAR, far: FAR }} dpr={[1, 1.6]}>
     <CameraRig headPose={headPose} />
@@ -2275,7 +2310,13 @@ const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSe
     <RoomWalls />
     <Roof />
     <RoomBoxOutline />
-    <SceneObjects gravityEnabled={gravityEnabled} gravityStrength={gravityStrength} restitution={restitution} collection={objectCollection} />
+    <SceneObjects
+      key={`${objectCollection}-${objectResetToken}`}
+      gravityEnabled={gravityEnabled}
+      gravityStrength={gravityStrength}
+      restitution={restitution}
+      collection={objectCollection}
+    />
     <UIShadowPlane rect={overlayRect} />
     {fingerGrab && <FingerDots pinchData={pinchData} sensitivity={fingerSensitivity} />}
     <OrbitControls enablePan={false} enableZoom={false} enableRotate={false} />
@@ -2318,6 +2359,7 @@ const Slider = ({
 const App = () => {
   const persistedSettings = useMemo(() => readPersistedSettings(), []);
   const [autoRecalibrateToken, setAutoRecalibrateToken] = useState(0);
+  const [objectResetToken, setObjectResetToken] = useState(0);
   const [params, setParams] = useState<SceneParams>({
     sensitivity: persistedSettings.sensitivity,
     depthCalibration: persistedSettings.depthCalibration,
@@ -2416,6 +2458,7 @@ const App = () => {
         gravityStrength={gravityStrength}
         restitution={restitution}
         objectCollection={objectCollection}
+        objectResetToken={objectResetToken}
       />
 
       {params.cameraOffsetMode === "auto" && !autoCalibrationLocked && (
@@ -2554,6 +2597,13 @@ const App = () => {
             )}
 
             <div className="settings-actions">
+              <button
+                type="button"
+                className="reset-objects-btn"
+                onClick={() => setObjectResetToken((v) => v + 1)}
+              >
+                Reset objects
+              </button>
               <button type="button" className="reset-btn" onClick={resetSettings}>
                 Reset to defaults
               </button>

@@ -253,6 +253,9 @@ body,
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid rgba(108, 130, 162, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .reset-btn {
@@ -271,6 +274,24 @@ body,
 .reset-btn:hover {
   background: #443131;
   border-color: #946060;
+}
+
+.reset-objects-btn {
+  width: 100%;
+  background: #253247;
+  border: 1px solid #4d6c96;
+  color: #d6e5ff;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.reset-objects-btn:hover {
+  background: #2f4059;
+  border-color: #6388ba;
 }
 
 .hdri-row {
