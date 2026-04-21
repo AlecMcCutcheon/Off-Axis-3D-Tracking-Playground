@@ -25,6 +25,18 @@ The MediaPipe face and hand tracking stack in this project genuinely blew my min
 - Hand depth estimation can vary with lighting, camera quality, and pose
 - This is a playground/demo, not a production physics engine
 
+## Q&A
+
+### "This does not look as good as what I've seen on YouTube. Why?"
+
+That is fair feedback. While this effect is definitely possible, my implementation is not as polished as some of the best demos others have built. I am more than open to pull requests that improve this.
+
+A big part of this is perception: it is much harder to trick your own eyes in person than it is to trick a camera recording. I have found that closing one eye makes the effect a bit more convincing.
+
+If you want to see the effect better, hold your phone while moving around the scene and then play back the recording. It usually looks more convincing on video than in-person live viewing.
+
+I am sure there are ways to make this feel more convincing in person (better graphics, tighter tuning, more refined movement), but your brain will still often catch that something is not quite right.
+
 ## Tech stack
 
 - React + TypeScript + Vite
