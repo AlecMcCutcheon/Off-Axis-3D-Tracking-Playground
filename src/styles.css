@@ -1,0 +1,210 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #070a10;
+}
+
+.app-shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.tracker-overlay {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  width: 338px;
+  padding: 12px;
+  border: 1px solid rgba(108, 130, 162, 0.35);
+  border-radius: 12px;
+  background: rgba(8, 14, 26, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 16px 28px rgba(3, 5, 8, 0.5);
+}
+
+.tracker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+.status-live {
+  background: rgba(51, 229, 186, 0.2);
+  color: #6ef8d4;
+}
+
+.status-idle {
+  background: rgba(170, 177, 199, 0.22);
+  color: #d4dcf9;
+}
+
+.tracker-video-wrapper {
+  position: relative;
+  width: 100%;
+  height: 190px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(97, 112, 145, 0.34);
+  background: #06080d;
+}
+
+.tracker-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: scaleX(-1);
+  object-fit: contain;
+  object-position: center;
+}
+
+/* Canvas fills the same box as the video.
+   No CSS transform here — x-mirroring is done in the drawing code
+   so there is no off-screen clipping from transform-origin issues. */
+.tracker-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.tracker-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #ff9e9e;
+}
+
+.sliders {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(108, 130, 162, 0.25);
+}
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 68px 1fr 32px;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #b0bcda;
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  accent-color: #6fa2ff;
+  height: 3px;
+  cursor: pointer;
+}
+
+.slider-value {
+  text-align: right;
+  color: #d4dcf9;
+  font-variant-numeric: tabular-nums;
+}
+
+.toggle-row {
+  grid-template-columns: 68px 1fr;
+}
+
+.toggle-btn {
+  background: #2a2d3a;
+  border: 1px solid #444;
+  color: #aaa;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s, color 0.15s;
+}
+
+.toggle-btn-on {
+  background: #1a3a2a;
+  border-color: #3ddc84;
+  color: #3ddc84;
+}
+
+.light-select {
+  background: #2a2d3a;
+  border: 1px solid #444;
+  color: #d4dcf9;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.hdri-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(108,130,162,0.25);
+}
+
+.hdri-input {
+  flex: 1;
+  background: #2a2d3a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  padding: 4px 7px;
+  font-size: 10px;
+  color: #d4dcf9;
+  font-family: monospace;
+  outline: none;
+  min-width: 0;
+}
+
+.hdri-input:focus {
+  border-color: #6fa2ff;
+}
+
+.hdri-load-btn {
+  flex-shrink: 0;
+  background: #3a4a6a;
+  border: 1px solid #6fa2ff;
+  border-radius: 4px;
+  color: #6fa2ff;
+  font-size: 10px;
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.hdri-load-btn:hover {
+  background: #4a5a7a;
+}
