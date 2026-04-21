@@ -141,6 +141,9 @@ interface LegacyV1Settings {
   settingsCollapsed?: boolean;
 }
 
+/** localStorage may be v1 shape, v2 shape, or a mix after manual edits */
+type StoredSettingsBlob = Partial<PersistedAppSettings> & LegacyV1Settings;
+
 const readPersistedSettings = (): PersistedAppSettings => {
   const defaults = getDefaultPersistedSettings();
   if (typeof window === "undefined") return defaults;
@@ -155,7 +158,7 @@ const readPersistedSettings = (): PersistedAppSettings => {
         return defaults;
       }
     }
-    const parsed = legacyV1 ?? (JSON.parse(raw!) as Partial<PersistedAppSettings>);
+    const parsed = (legacyV1 ?? JSON.parse(raw!)) as StoredSettingsBlob;
     const cameraOffsetMode =
       parsed.cameraOffsetMode === "auto" ||
       parsed.cameraOffsetMode === "center" ||
@@ -280,7 +283,8 @@ function drawOverlay(
   iris: { x: number; y: number } | null,
   handLandmarks: NormalizedLandmark[] | undefined,
   pinchHint: { isPinching: boolean; pinchDist: number } | null,
-  cameraCenterNX: number
+  cameraCenterNX: number,
+  cameraCenterNY: number
 ) {
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
@@ -292,8 +296,9 @@ function drawOverlay(
   const px = (x: number) => (1 - x) * W;
   const py = (y: number) => y * H;
   const guideX = px(cameraCenterNX);
+  const guideY = py(cameraCenterNY);
 
-  // Dotted vertical guide for camera-center alignment calibration.
+  // Dotted vertical + horizontal guides for auto calibration (X + Y neutral iris).
   ctx.save();
   ctx.strokeStyle = "rgba(120, 190, 255, 0.75)";
   ctx.lineWidth = 1.5;
@@ -302,10 +307,14 @@ function drawOverlay(
   ctx.moveTo(guideX, 0);
   ctx.lineTo(guideX, H);
   ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, guideY);
+  ctx.lineTo(W, guideY);
+  ctx.stroke();
   ctx.setLineDash([]);
   ctx.fillStyle = "rgba(120, 190, 255, 0.8)";
   ctx.beginPath();
-  ctx.arc(guideX, H * 0.5, 3, 0, Math.PI * 2);
+  ctx.arc(guideX, guideY, 3, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
@@ -429,7 +438,11 @@ const initialPinch: PinchData = {
 };
 
 // ── Face + Hand tracking hook ────────────────────────────────────────────────
-const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
+const useFaceTracking = (
+  params: SceneParams,
+  autoRecalibrateToken: number,
+  drawTrackingOverlay: boolean
+): {
   videoRef: RefObject<HTMLVideoElement | null>;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   trackingState: TrackingState;
@@ -438,6 +451,8 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
 } => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const drawTrackingOverlayRef = useRef(drawTrackingOverlay);
+  drawTrackingOverlayRef.current = drawTrackingOverlay;
   const [autoCalibrationLocked, setAutoCalibrationLocked] = useState(false);
   const [autoCalibrationProgress, setAutoCalibrationProgress] = useState(0);
   const [trackingState, setTrackingState] = useState<TrackingState>({
@@ -458,8 +473,12 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
   const AUTO_STABLE_ENTER_N = 0.0012;
   const AUTO_STABLE_EXIT_N = 0.0018;
   const AUTO_STABLE_HOLD_MS = 2600;
+  /** Clamped vertical “neutral” iris row when auto calibration locks (normalized 0–1). */
+  const AUTO_CENTER_NY_MIN = 0.12;
+  const AUTO_CENTER_NY_MAX = 0.88;
   const faceScaleRef = useRef<{ value: number; valid: boolean }>({ value: 0.065, valid: false });
   const autoCenterNXRef = useRef(0.5);
+  const autoCenterNYRef = useRef(0.5);
   const autoLockedRef = useRef(false);
   const autoStartDelayUntilMsRef = useRef<number | null>(null);
   const autoStableSinceMsRef = useRef<number | null>(null);
@@ -548,6 +567,7 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
           if (autoRecalibrateTokenRef.current !== autoRecalibrateInputRef.current) {
             autoRecalibrateTokenRef.current = autoRecalibrateInputRef.current;
             autoCenterNXRef.current = 0.5;
+            autoCenterNYRef.current = 0.5;
             autoLockedRef.current = false;
             autoStartDelayUntilMsRef.current = now + AUTO_CALIBRATION_DELAY_MS;
             autoStableSinceMsRef.current = null;
@@ -574,6 +594,12 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
             }
           }
           const cameraCenterNX = clamp(cameraCenterBaseNX + cameraOffsetN, 0.12, 0.88);
+
+          let cameraCenterBaseNY = 0.5;
+          if (cameraOffsetMode === "auto") {
+            cameraCenterBaseNY = autoLockedRef.current ? autoCenterNYRef.current : 0.5;
+          }
+          const cameraCenterNY = clamp(cameraCenterBaseNY, AUTO_CENTER_NY_MIN, AUTO_CENTER_NY_MAX);
 
           let pinchOverlay: { isPinching: boolean; pinchDist: number } | null = null;
           let pinch: PinchData = { ...initialPinch, hasHand: false };
@@ -637,14 +663,15 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
             pinchOverlay = { isPinching: pinchLatch.current, pinchDist };
           }
 
-          if (canvasRef.current) {
+          if (drawTrackingOverlayRef.current && canvasRef.current) {
             drawOverlay(
               canvasRef.current,
               lms,
               iris.ok ? { x: iris.cx, y: iris.cy } : null,
               handLms,
               pinchOverlay,
-              cameraCenterNX
+              cameraCenterNX,
+              cameraCenterNY
             );
           }
 
@@ -678,7 +705,11 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
                 );
                 faceScaleRef.current.valid = true;
                 const tx = clamp((cameraCenterNX - iris.cx) * SCREEN_WIDTH_CM * sensitivity, -LIMIT_X, LIMIT_X);
-                const ty = clamp((0.5 - iris.cy) * SCREEN_HEIGHT_CM * sensitivity * 0.8, -LIMIT_Y, LIMIT_Y);
+                const ty = clamp(
+                  (cameraCenterNY - iris.cy) * SCREEN_HEIGHT_CM * sensitivity * 0.8,
+                  -LIMIT_Y,
+                  LIMIT_Y
+                );
                 const tz = clamp(depthCalibration / iris.eyeDist, MIN_HEAD_Z_CM, MAX_HEAD_Z_CM);
                 currentHead.current = { x: tx, y: ty, z: tz, hasFace: true };
                 setTrackingState({ headPose: currentHead.current, handPos: currentHand.current, pinchData: pinch, loading: false, error: null });
@@ -710,6 +741,7 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
 
               if (stableForMs >= AUTO_STABLE_HOLD_MS) {
                 autoCenterNXRef.current = clamp(iris.cx, 0.12, 0.88);
+                autoCenterNYRef.current = clamp(iris.cy, AUTO_CENTER_NY_MIN, AUTO_CENTER_NY_MAX);
                 autoLockedRef.current = true;
                 setAutoCalibrationLocked(true);
                 autoProgressRef.current = 1;
@@ -723,7 +755,11 @@ const useFaceTracking = (params: SceneParams, autoRecalibrateToken: number): {
             );
             faceScaleRef.current.valid = true;
             const tx = clamp((cameraCenterNX - iris.cx) * SCREEN_WIDTH_CM * sensitivity, -LIMIT_X, LIMIT_X);
-            const ty = clamp((0.5 - iris.cy) * SCREEN_HEIGHT_CM * sensitivity * 0.8, -LIMIT_Y, LIMIT_Y);
+            const ty = clamp(
+              (cameraCenterNY - iris.cy) * SCREEN_HEIGHT_CM * sensitivity * 0.8,
+              -LIMIT_Y,
+              LIMIT_Y
+            );
             const tz = clamp(depthCalibration / iris.eyeDist, MIN_HEAD_Z_CM, MAX_HEAD_Z_CM);
             currentHead.current = { x: tx, y: ty, z: tz, hasFace: true };
           }
@@ -2563,6 +2599,7 @@ const App = () => {
   );
 
   const allowHeavyFeatures = !isMobileDevice;
+  const showCameraPreview = !isMobileDevice;
 
   useEffect(() => {
     if (!isMobileDevice) return;
@@ -2580,7 +2617,8 @@ const App = () => {
     autoCalibrationProgress,
   } = useFaceTracking(
     params,
-    autoRecalibrateToken
+    autoRecalibrateToken,
+    showCameraPreview
   );
 
   useLayoutEffect(() => {
@@ -2696,7 +2734,9 @@ const App = () => {
           </div>
         </button>
 
-        <div className={`tracker-video-wrapper ${settingsCollapsed ? "tracker-video-wrapper-hidden" : ""}`}>
+        <div
+          className={`tracker-video-wrapper ${settingsCollapsed ? "tracker-video-wrapper-hidden" : ""} ${isMobileDevice ? "tracker-video-wrapper-mobile-hidden" : ""}`}
+        >
           <video ref={videoRef} className="tracker-video" muted playsInline />
           <canvas ref={canvasRef} className="tracker-canvas" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
         </div>
