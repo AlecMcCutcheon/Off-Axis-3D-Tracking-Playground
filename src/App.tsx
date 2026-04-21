@@ -147,11 +147,15 @@ function drawOverlay(
     }
 
     // Pass 2 — thumb and index drawn larger on top with line between them
-    const goodT  = t  != null && Number.isFinite(t.x)  && Number.isFinite(t.y);
-    const goodI  = i8 != null && Number.isFinite(i8.x) && Number.isFinite(i8.y);
-
-    if (goodT && goodI) {
-      const tx = px(t.x),  ty = py(t.y);
+    if (
+      t &&
+      i8 &&
+      Number.isFinite(t.x) &&
+      Number.isFinite(t.y) &&
+      Number.isFinite(i8.x) &&
+      Number.isFinite(i8.y)
+    ) {
+      const tx = px(t.x), ty = py(t.y);
       const ix = px(i8.x), iy = py(i8.y);
       const midX = (tx + ix) / 2;
       const midY = (ty + iy) / 2;
@@ -2014,7 +2018,7 @@ const Scene = ({ headPose, pinchData, overlayRect, fingerGrab, hdriUrl, fingerSe
   restitution: number;
   objectCollection: ObjectCollectionId;
 }) => (
-  <Canvas shadows="vsm" camera={{ position: [0, 0, DEFAULT_HEAD_Z_CM], near: NEAR, far: FAR }} dpr={[1, 1.6]}>
+  <Canvas shadows="variance" camera={{ position: [0, 0, DEFAULT_HEAD_Z_CM], near: NEAR, far: FAR }} dpr={[1, 1.6]}>
     <CameraRig headPose={headPose} />
     <Lights />
     <HDRIEnvironment url={hdriUrl} />
