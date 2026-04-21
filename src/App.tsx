@@ -49,6 +49,17 @@ interface SceneParams {
 
 type ObjectCollectionId = "starter" | "dense" | "chaos";
 
+interface PersistedAppSettings {
+  sensitivity: number;
+  depthCalibration: number;
+  fingerGrab: boolean;
+  gravityEnabled: boolean;
+  gravityStrength: number;
+  restitution: number;
+  objectCollection: ObjectCollectionId;
+  settingsCollapsed: boolean;
+}
+
 const VIDEO_WIDTH = 640;
 const VIDEO_HEIGHT = 360;
 
@@ -65,8 +76,73 @@ const MAX_HEAD_Z_CM = 120;
 
 const initialHeadPose: HeadPose = { x: 0, y: 0, z: DEFAULT_HEAD_Z_CM, hasFace: false };
 const defaultParams: SceneParams = { sensitivity: 1.3, depthCalibration: 4.5 };
+const DEFAULT_FINGER_GRAB = false;
+const DEFAULT_GRAVITY_ENABLED = false;
+const DEFAULT_GRAVITY_STRENGTH = 98;
+const DEFAULT_RESTITUTION = 0.62;
+const DEFAULT_OBJECT_COLLECTION: ObjectCollectionId = "starter";
+const DEFAULT_SETTINGS_COLLAPSED = true;
+const SETTINGS_STORAGE_KEY = "off-axis-3d-playground.settings.v1";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
+
+const getDefaultPersistedSettings = (): PersistedAppSettings => ({
+  sensitivity: defaultParams.sensitivity,
+  depthCalibration: defaultParams.depthCalibration,
+  fingerGrab: DEFAULT_FINGER_GRAB,
+  gravityEnabled: DEFAULT_GRAVITY_ENABLED,
+  gravityStrength: DEFAULT_GRAVITY_STRENGTH,
+  restitution: DEFAULT_RESTITUTION,
+  objectCollection: DEFAULT_OBJECT_COLLECTION,
+  settingsCollapsed: DEFAULT_SETTINGS_COLLAPSED,
+});
+
+const readPersistedSettings = (): PersistedAppSettings => {
+  const defaults = getDefaultPersistedSettings();
+  if (typeof window === "undefined") return defaults;
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_STORAGE_KEY);
+    if (!raw) return defaults;
+    const parsed = JSON.parse(raw) as Partial<PersistedAppSettings>;
+    const objectCollection =
+      parsed.objectCollection === "starter" ||
+      parsed.objectCollection === "dense" ||
+      parsed.objectCollection === "chaos"
+        ? parsed.objectCollection
+        : defaults.objectCollection;
+    return {
+      sensitivity:
+        typeof parsed.sensitivity === "number" && Number.isFinite(parsed.sensitivity)
+          ? clamp(parsed.sensitivity, 0.5, 5)
+          : defaults.sensitivity,
+      depthCalibration:
+        typeof parsed.depthCalibration === "number" && Number.isFinite(parsed.depthCalibration)
+          ? clamp(parsed.depthCalibration, 1, 12)
+          : defaults.depthCalibration,
+      fingerGrab:
+        typeof parsed.fingerGrab === "boolean" ? parsed.fingerGrab : defaults.fingerGrab,
+      gravityEnabled:
+        typeof parsed.gravityEnabled === "boolean"
+          ? parsed.gravityEnabled
+          : defaults.gravityEnabled,
+      gravityStrength:
+        typeof parsed.gravityStrength === "number" && Number.isFinite(parsed.gravityStrength)
+          ? clamp(parsed.gravityStrength, 0, 220)
+          : defaults.gravityStrength,
+      restitution:
+        typeof parsed.restitution === "number" && Number.isFinite(parsed.restitution)
+          ? clamp(parsed.restitution, 0, 0.95)
+          : defaults.restitution,
+      objectCollection,
+      settingsCollapsed:
+        typeof parsed.settingsCollapsed === "boolean"
+          ? parsed.settingsCollapsed
+          : defaults.settingsCollapsed,
+    };
+  } catch {
+    return defaults;
+  }
+};
 
 /** Thumb-index tip distance (normalized); hysteresis keeps pinch and overlay stable. */
 const PINCH_ON = 0.076;
@@ -313,14 +389,14 @@ const useFaceTracking = (params: SceneParams): {
         if (alive) setTrackingState(s => ({ ...s, loading: false }));
 
         const tick = () => {
-          if (!alive || !videoRef.current || !canvasRef.current || !faceLandmarker || !handLandmarker) return;
+          if (!alive || !videoRef.current || !faceLandmarker || !handLandmarker) return;
           const video = videoRef.current;
           if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) { raf = requestAnimationFrame(tick); return; }
 
           const canv = canvasRef.current;
           const vw = video.videoWidth;
           const vh = video.videoHeight;
-          if (vw > 0 && vh > 0 && (canv.width !== vw || canv.height !== vh)) {
+          if (canv && vw > 0 && vh > 0 && (canv.width !== vw || canv.height !== vh)) {
             canv.width = vw;
             canv.height = vh;
           }
@@ -396,13 +472,15 @@ const useFaceTracking = (params: SceneParams): {
             pinchOverlay = { isPinching: pinchLatch.current, pinchDist };
           }
 
-          drawOverlay(
-            canvasRef.current,
-            lms,
-            iris.ok ? { x: iris.cx, y: iris.cy } : null,
-            handLms,
-            pinchOverlay
-          );
+          if (canvasRef.current) {
+            drawOverlay(
+              canvasRef.current,
+              lms,
+              iris.ok ? { x: iris.cx, y: iris.cy } : null,
+              handLms,
+              pinchOverlay
+            );
+          }
 
           if (!iris.ok || iris.eyeDist < 0.00001) {
             currentHead.current = { ...currentHead.current, hasFace: false };
@@ -2061,13 +2139,19 @@ const Slider = ({
 
 // ── App ───────────────────────────────────────────────────────────────────────
 const App = () => {
-  const [params, setParams] = useState<SceneParams>(defaultParams);
-  const [fingerGrab, setFingerGrab] = useState(false);
-  const [gravityEnabled, setGravityEnabled] = useState(false);
-  const [gravityStrength, setGravityStrength] = useState(98);
-  const [restitution, setRestitution] = useState(0.62);
-  const [objectCollection, setObjectCollection] = useState<ObjectCollectionId>("starter");
-  const [settingsCollapsed, setSettingsCollapsed] = useState(true);
+  const persistedSettings = useMemo(() => readPersistedSettings(), []);
+  const [params, setParams] = useState<SceneParams>({
+    sensitivity: persistedSettings.sensitivity,
+    depthCalibration: persistedSettings.depthCalibration,
+  });
+  const [fingerGrab, setFingerGrab] = useState(persistedSettings.fingerGrab);
+  const [gravityEnabled, setGravityEnabled] = useState(persistedSettings.gravityEnabled);
+  const [gravityStrength, setGravityStrength] = useState(persistedSettings.gravityStrength);
+  const [restitution, setRestitution] = useState(persistedSettings.restitution);
+  const [objectCollection, setObjectCollection] = useState<ObjectCollectionId>(
+    persistedSettings.objectCollection
+  );
+  const [settingsCollapsed, setSettingsCollapsed] = useState(persistedSettings.settingsCollapsed);
   const [overlayRect, setOverlayRect] = useState<DOMRect | null>(null);
   const overlayRef = useRef<HTMLElement>(null);
 
@@ -2084,6 +2168,44 @@ const App = () => {
 
   const set = (key: keyof SceneParams) => (v: number) =>
     setParams(p => ({ ...p, [key]: v }));
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const payload: PersistedAppSettings = {
+      sensitivity: params.sensitivity,
+      depthCalibration: params.depthCalibration,
+      fingerGrab,
+      gravityEnabled,
+      gravityStrength,
+      restitution,
+      objectCollection,
+      settingsCollapsed,
+    };
+    window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
+  }, [
+    params.sensitivity,
+    params.depthCalibration,
+    fingerGrab,
+    gravityEnabled,
+    gravityStrength,
+    restitution,
+    objectCollection,
+    settingsCollapsed,
+  ]);
+
+  const resetSettings = () => {
+    const defaults = getDefaultPersistedSettings();
+    setParams({
+      sensitivity: defaults.sensitivity,
+      depthCalibration: defaults.depthCalibration,
+    });
+    setFingerGrab(defaults.fingerGrab);
+    setGravityEnabled(defaults.gravityEnabled);
+    setGravityStrength(defaults.gravityStrength);
+    setRestitution(defaults.restitution);
+    setObjectCollection(defaults.objectCollection);
+    setSettingsCollapsed(defaults.settingsCollapsed);
+  };
 
   return (
     <main className="app-shell">
@@ -2116,13 +2238,13 @@ const App = () => {
           </div>
         </button>
 
+        <div className={`tracker-video-wrapper ${settingsCollapsed ? "tracker-video-wrapper-hidden" : ""}`}>
+          <video ref={videoRef} className="tracker-video" muted playsInline />
+          <canvas ref={canvasRef} className="tracker-canvas" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
+        </div>
+
         {!settingsCollapsed && (
           <>
-            <div className="tracker-video-wrapper">
-              <video ref={videoRef} className="tracker-video" muted playsInline />
-              <canvas ref={canvasRef} className="tracker-canvas" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
-            </div>
-
             <div className="sliders">
               <Slider label="Sensitivity"   value={params.sensitivity}      min={0.5} max={5}  step={0.1} onChange={set("sensitivity")} />
               <Slider label="Depth cal."    value={params.depthCalibration} min={1}   max={12} step={0.1} onChange={set("depthCalibration")} />
@@ -2183,6 +2305,12 @@ const App = () => {
                 />
               </>
             )}
+
+            <div className="settings-actions">
+              <button type="button" className="reset-btn" onClick={resetSettings}>
+                Reset to defaults
+              </button>
+            </div>
 
             {trackingState.error && <p className="tracker-error">{trackingState.error}</p>}
           </>
