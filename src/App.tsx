@@ -2067,6 +2067,7 @@ const App = () => {
   const [gravityStrength, setGravityStrength] = useState(98);
   const [restitution, setRestitution] = useState(0.62);
   const [objectCollection, setObjectCollection] = useState<ObjectCollectionId>("starter");
+  const [settingsCollapsed, setSettingsCollapsed] = useState(true);
   const [overlayRect, setOverlayRect] = useState<DOMRect | null>(null);
   const overlayRef = useRef<HTMLElement>(null);
 
@@ -2100,80 +2101,92 @@ const App = () => {
       />
 
       <aside className="tracker-overlay" ref={overlayRef as React.RefObject<HTMLDivElement>}>
-        <div className="tracker-header">
+        <button
+          type="button"
+          className={`tracker-header tracker-header-btn ${settingsCollapsed ? "tracker-header-collapsed" : ""}`}
+          aria-expanded={!settingsCollapsed}
+          onClick={() => setSettingsCollapsed((v) => !v)}
+        >
           <strong>Face Tracker</strong>
-          <span className={trackingState.headPose.hasFace ? "status status-live" : "status status-idle"}>
-            {trackingState.loading ? "loading" : trackingState.headPose.hasFace ? "live" : "no face"}
-          </span>
-        </div>
+          <div className="tracker-header-right">
+            <span className={trackingState.headPose.hasFace ? "status status-live" : "status status-idle"}>
+              {trackingState.loading ? "loading" : trackingState.headPose.hasFace ? "live" : "no face"}
+            </span>
+            <span className="tracker-collapse-indicator">{settingsCollapsed ? "open" : "close"}</span>
+          </div>
+        </button>
 
-        <div className="tracker-video-wrapper">
-          <video ref={videoRef} className="tracker-video" muted playsInline />
-          <canvas ref={canvasRef} className="tracker-canvas" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
-        </div>
-
-        <div className="sliders">
-          <Slider label="Sensitivity"   value={params.sensitivity}      min={0.5} max={5}  step={0.1} onChange={set("sensitivity")} />
-          <Slider label="Depth cal."    value={params.depthCalibration} min={1}   max={12} step={0.1} onChange={set("depthCalibration")} />
-        </div>
-
-        <label className="slider-row toggle-row" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(108,130,162,0.25)' }}>
-          <span className="slider-label" style={{ color: '#f5a623' }}>⚗ Finger grab</span>
-          <button
-            className={`toggle-btn ${fingerGrab ? "toggle-btn-on" : ""}`}
-            onClick={() => setFingerGrab(v => !v)}
-          >
-            {fingerGrab
-              ? (trackingState.pinchData.isPinching ? 'ON — grabbing' : trackingState.pinchData.hasHand ? 'ON — hand tracked' : 'ON — no hand')
-              : 'OFF (experimental)'}
-          </button>
-        </label>
-
-        <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
-          <span className="slider-label" style={{ color: "#d7c39d" }}>Objects</span>
-          <select
-            className="light-select"
-            value={objectCollection}
-            onChange={(e) => setObjectCollection(e.target.value as ObjectCollectionId)}
-          >
-            <option value="starter">Starter set</option>
-            <option value="dense">Dense set</option>
-            <option value="chaos">Chaos set</option>
-          </select>
-        </label>
-
-        <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
-          <span className="slider-label" style={{ color: '#a7b8d8' }}>Gravity</span>
-          <button
-            className={`toggle-btn ${gravityEnabled ? "toggle-btn-on" : ""}`}
-            onClick={() => setGravityEnabled(v => !v)}
-          >
-            {gravityEnabled ? (gravityStrength <= 0 ? "ON — zero-g drift" : "ON — room collision") : "OFF"}
-          </button>
-        </label>
-
-        {gravityEnabled && (
+        {!settingsCollapsed && (
           <>
-            <Slider
-              label="Gravity"
-              value={gravityStrength}
-              min={0}
-              max={220}
-              step={2}
-              onChange={setGravityStrength}
-            />
-            <Slider
-              label="Bounce"
-              value={restitution}
-              min={0}
-              max={0.95}
-              step={0.01}
-              onChange={setRestitution}
-            />
+            <div className="tracker-video-wrapper">
+              <video ref={videoRef} className="tracker-video" muted playsInline />
+              <canvas ref={canvasRef} className="tracker-canvas" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} />
+            </div>
+
+            <div className="sliders">
+              <Slider label="Sensitivity"   value={params.sensitivity}      min={0.5} max={5}  step={0.1} onChange={set("sensitivity")} />
+              <Slider label="Depth cal."    value={params.depthCalibration} min={1}   max={12} step={0.1} onChange={set("depthCalibration")} />
+            </div>
+
+            <label className="slider-row toggle-row" style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(108,130,162,0.25)' }}>
+              <span className="slider-label" style={{ color: '#f5a623' }}>⚗ Finger grab</span>
+              <button
+                className={`toggle-btn ${fingerGrab ? "toggle-btn-on" : ""}`}
+                onClick={() => setFingerGrab(v => !v)}
+              >
+                {fingerGrab
+                  ? (trackingState.pinchData.isPinching ? 'ON — grabbing' : trackingState.pinchData.hasHand ? 'ON — hand tracked' : 'ON — no hand')
+                  : 'OFF (experimental)'}
+              </button>
+            </label>
+
+            <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
+              <span className="slider-label" style={{ color: "#d7c39d" }}>Objects</span>
+              <select
+                className="light-select"
+                value={objectCollection}
+                onChange={(e) => setObjectCollection(e.target.value as ObjectCollectionId)}
+              >
+                <option value="starter">Starter set</option>
+                <option value="dense">Dense set</option>
+                <option value="chaos">Chaos set</option>
+              </select>
+            </label>
+
+            <label className="slider-row toggle-row" style={{ marginTop: 8 }}>
+              <span className="slider-label" style={{ color: '#a7b8d8' }}>Gravity</span>
+              <button
+                className={`toggle-btn ${gravityEnabled ? "toggle-btn-on" : ""}`}
+                onClick={() => setGravityEnabled(v => !v)}
+              >
+                {gravityEnabled ? (gravityStrength <= 0 ? "ON — zero-g drift" : "ON — room collision") : "OFF"}
+              </button>
+            </label>
+
+            {gravityEnabled && (
+              <>
+                <Slider
+                  label="Gravity"
+                  value={gravityStrength}
+                  min={0}
+                  max={220}
+                  step={2}
+                  onChange={setGravityStrength}
+                />
+                <Slider
+                  label="Bounce"
+                  value={restitution}
+                  min={0}
+                  max={0.95}
+                  step={0.01}
+                  onChange={setRestitution}
+                />
+              </>
+            )}
+
+            {trackingState.error && <p className="tracker-error">{trackingState.error}</p>}
           </>
         )}
-
-        {trackingState.error && <p className="tracker-error">{trackingState.error}</p>}
       </aside>
     </main>
   );
